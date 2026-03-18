@@ -1,0 +1,8 @@
+Limit  (cost=0.29..3.03 rows=20 width=59) (actual time=3.452..3.476 rows=20 loops=1)
+  Buffers: shared hit=961
+  ->  Index Scan using idx_articles_published_at on articles  (cost=0.29..4799.27 rows=35083 width=59) (actual time=3.450..3.472 rows=20 loops=1)
+        Filter: (status = 'published'::text)
+        Rows Removed by Filter: 15043
+        Buffers: shared hit=961
+Planning Time: 0.060 ms
+Execution Time: 3.495 ms

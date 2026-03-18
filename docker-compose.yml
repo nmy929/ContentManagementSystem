@@ -1,0 +1,39 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: d551user
+      POSTGRES_PASSWORD: d551pass
+      POSTGRES_DB: d551
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres_cms_dataset:/data
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://d551user:d551pass@db:5432/d551
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: d551user
+      DB_PASSWORD: d551pass
+      DB_NAME: d551
+      ARTIFACT_DIR: /data/artifacts
+      JWT_SECRET: devsecret
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    volumes:
+      - ./postgres_cms_dataset:/data
+
+  frontend:
+    build: ./frontend
+    environment:
+      VITE_API_BASE: http://localhost:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend

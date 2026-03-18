@@ -1,0 +1,8 @@
+Limit  (cost=0.00..0.14 rows=5 width=117) (actual time=0.013..0.015 rows=5 loops=1)
+  Buffers: shared hit=1
+  ->  Seq Scan on articles  (cost=0.00..1425.00 rows=50000 width=117) (actual time=0.012..0.013 rows=5 loops=1)
+        Buffers: shared hit=1
+Planning:
+  Buffers: shared hit=127
+Planning Time: 0.500 ms
+Execution Time: 0.028 ms
