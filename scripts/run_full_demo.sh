@@ -43,11 +43,11 @@ for i in $(seq 1 10); do
   sleep 0.2
 done
 
-echo "[6/6] Bulk unpublish and load test"
-curl -s -X POST http://localhost:8000/api/admin/bulk_unpublish \
+echo "[6/6] Bulk status change and load test"
+curl -s -X POST http://localhost:8000/api/admin/bulk_status_change/apply \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"category_id":1,"older_than_days":365}' >/dev/null
+  -d '{"category_id":1,"source_status":"published","target_status":"draft"}' >/dev/null
 
 curl -s -X POST http://localhost:8000/api/admin/run_load_test \
   -H "Authorization: Bearer $ADMIN_TOKEN" \

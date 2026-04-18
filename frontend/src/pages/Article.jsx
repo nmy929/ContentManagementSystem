@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api';
+import formatDateTime from '../utils/formatDateTime';
 
 export default function Article({ role }) {
   const { id } = useParams();
@@ -12,7 +13,7 @@ export default function Article({ role }) {
   const [error, setError] = useState(null);
 
   const canComment = role === 'author' || role === 'editor' || role === 'admin';
-  const canDeleteComments = role === 'editor' || role === 'admin';
+  const canModerateComments = role === 'editor' || role === 'admin';
 
   const loadComments = async () => {
     const res = await api.get(`/api/articles/${id}/comments`);
@@ -82,6 +83,20 @@ export default function Article({ role }) {
     }
   };
 
+  const toggleCommentFlag = async (commentId, nextFlagState) => {
+    setCommentLoading(true);
+    setCommentMessage('');
+    try {
+      await api.patch(`/api/comments/${commentId}/flag`, { is_flagged: nextFlagState });
+      setCommentMessage(nextFlagState ? 'Comment flagged.' : 'Comment unflagged.');
+      await loadComments();
+    } catch (err) {
+      setCommentMessage(err.response?.data?.detail || 'Failed to update comment flag.');
+    } finally {
+      setCommentLoading(false);
+    }
+  };
+
   return (
     <div className="card">
       <div className="page-actions">
@@ -102,7 +117,7 @@ export default function Article({ role }) {
       <hr />
       <h3>Comments</h3>
       {canComment && (
-        <>
+        <div className="comment-form">
           <label>Add Comment</label>
           <textarea
             rows="4"
@@ -113,7 +128,7 @@ export default function Article({ role }) {
           <button onClick={submitComment} disabled={commentLoading}>
             Post Comment
           </button>
-        </>
+        </div>
       )}
       {commentMessage && <p>{commentMessage}</p>}
       {comments.length === 0 ? (
@@ -127,15 +142,25 @@ export default function Article({ role }) {
               ({comment.role || 'unknown'})
             </p>
             <p>{comment.content}</p>
-            <p>{comment.created_at || 'Unknown time'}</p>
-            {canDeleteComments && (
-              <button
-                className="secondary"
-                onClick={() => deleteComment(comment.comment_id)}
-                disabled={commentLoading}
-              >
-                Delete Comment
-              </button>
+            <p>{formatDateTime(comment.created_at) || 'Unknown time'}</p>
+            <p>Status: {comment.is_flagged ? 'Flagged' : 'Normal'}</p>
+            {canModerateComments && (
+              <div className="comment-actions">
+                <button
+                  className="secondary"
+                  onClick={() => toggleCommentFlag(comment.comment_id, !comment.is_flagged)}
+                  disabled={commentLoading}
+                >
+                  {comment.is_flagged ? 'Unflag Comment' : 'Flag Comment'}
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() => deleteComment(comment.comment_id)}
+                  disabled={commentLoading}
+                >
+                  Delete Comment
+                </button>
+              </div>
             )}
           </div>
         ))

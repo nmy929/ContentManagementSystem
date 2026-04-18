@@ -71,6 +71,10 @@ class CommentCreate(BaseModel):
     content: str
 
 
+class CommentFlagUpdate(BaseModel):
+    is_flagged: bool
+
+
 class CommentResponse(BaseModel):
     comment_id: int
     article_id: int
@@ -104,6 +108,38 @@ class LoadTestRequest(BaseModel):
     target: str
     concurrency: int
     ops: int
+
+
+class AutovacuumToggleRequest(BaseModel):
+    table: str
+    enabled: bool
+
+
+class BulkStatusChangePreviewRequest(BaseModel):
+    category_id: int
+    source_status: str
+    target_status: str
+
+
+TABLE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)?$")
+
+
+def normalize_table_ident(table: str) -> str:
+    value = table.strip()
+    if not TABLE_IDENT_RE.match(value):
+        raise HTTPException(status_code=400, detail="Invalid table name")
+    return value
+
+
+def parse_reloptions_autovacuum_enabled(reloptions: Optional[List[str]]) -> Optional[bool]:
+    if not reloptions:
+        return None
+    for opt in reloptions:
+        if opt == "autovacuum_enabled=false":
+            return False
+        if opt == "autovacuum_enabled=true":
+            return True
+    return None
 
 
 async def get_pool() -> asyncpg.pool.Pool:
@@ -148,6 +184,20 @@ def require_roles(*roles: str):
 def local_now() -> datetime:
     # Store Los Angeles local clock time while keeping a naive timestamp to match the dataset schema.
     return datetime.now(APP_TIMEZONE).replace(tzinfo=None)
+
+
+def format_datetime(value: datetime) -> str:
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def serialize_datetimes(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return format_datetime(value)
+    if isinstance(value, dict):
+        return {key: serialize_datetimes(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [serialize_datetimes(item) for item in value]
+    return value
 
 
 def safe_filename(prefix: str, ext: str = "txt") -> str:
@@ -290,7 +340,7 @@ async def get_articles(
     response: Dict[str, Any] = {"rows": data, "explain_artifact": explain_info["artifact"]}
     if user["role"] == ROLE_ADMIN:
         response["explain_text"] = explain_info["explain_text"]
-    return response
+    return serialize_datetimes(response)
 
 
 @app.get("/api/articles/{article_id}")
@@ -312,7 +362,7 @@ async def get_article(
         )
         if not row:
             raise HTTPException(status_code=404, detail="Not found")
-        return dict(row)
+        return serialize_datetimes(dict(row))
 
 
 @app.post("/api/articles")
@@ -508,7 +558,7 @@ async def list_comments(
             """,
             article_id,
         )
-    return {"rows": [dict(r) for r in rows]}
+    return serialize_datetimes({"rows": [dict(r) for r in rows]})
 
 
 @app.delete("/api/comments/{comment_id}")
@@ -520,6 +570,29 @@ async def delete_comment(
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM comments WHERE comment_id = $1", comment_id)
     return {"status": "ok"}
+
+
+@app.patch("/api/comments/{comment_id}/flag")
+async def update_comment_flag(
+    comment_id: int,
+    payload: CommentFlagUpdate,
+    user: Dict[str, Any] = Depends(require_roles(ROLE_EDITOR, ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        article_id = await conn.fetchval(
+            """
+            UPDATE comments
+            SET is_flagged = $1
+            WHERE comment_id = $2
+            RETURNING article_id
+            """,
+            payload.is_flagged,
+            comment_id,
+        )
+        if article_id is None:
+            raise HTTPException(status_code=404, detail="Comment not found")
+    return {"status": "ok", "comment_id": comment_id, "article_id": article_id, "is_flagged": payload.is_flagged}
 
 
 @app.get("/api/search")
@@ -546,7 +619,7 @@ async def search_articles(
     response = {"rows": [dict(r) for r in rows], "explain_artifact": explain_info["artifact"]}
     if user["role"] == ROLE_ADMIN:
         response["explain_text"] = explain_info["explain_text"]
-    return response
+    return serialize_datetimes(response)
 
 
 @app.post("/api/admin/bulk_unpublish")
@@ -679,6 +752,168 @@ async def run_vacuum(
     return {"status": "ok", "artifact": artifact, "experiment_id": exp_id}
 
 
+async def fetch_autovacuum_status(conn: asyncpg.Connection, table: str) -> Dict[str, Any]:
+    global_autovacuum = await conn.fetchval("SELECT current_setting('autovacuum')")
+    global_naptime = await conn.fetchval("SELECT current_setting('autovacuum_naptime')")
+
+    relid = await conn.fetchval("SELECT to_regclass($1)", table)
+    if not relid:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    reloptions = await conn.fetchval(
+        "SELECT reloptions FROM pg_class WHERE oid = to_regclass($1)",
+        table,
+    )
+    table_setting = parse_reloptions_autovacuum_enabled(reloptions)
+    effective_enabled = (global_autovacuum == "on") and (table_setting is not False)
+
+    stat_row = await conn.fetchrow(
+        """
+        SELECT n_live_tup, n_dead_tup, last_autovacuum, last_vacuum, autovacuum_count, vacuum_count
+        FROM pg_stat_user_tables
+        WHERE relid = to_regclass($1)
+        """,
+        table,
+    )
+    stat = dict(stat_row) if stat_row else {}
+
+    return serialize_datetimes(
+        {
+            "table": table,
+            "global_autovacuum": global_autovacuum,
+            "global_autovacuum_naptime": global_naptime,
+            "reloptions": reloptions or [],
+            "table_autovacuum_enabled_setting": table_setting,
+            "effective_autovacuum_enabled": effective_enabled,
+            "pg_stat_user_tables": stat,
+        }
+    )
+
+
+@app.get("/api/admin/autovacuum_status")
+async def autovacuum_status(
+    table: str = "articles",
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    normalized = normalize_table_ident(table)
+    async with pool.acquire() as conn:
+        status = await fetch_autovacuum_status(conn, normalized)
+    return {"status": "ok", "data": status}
+
+
+@app.post("/api/admin/set_autovacuum")
+async def set_autovacuum(
+    payload: AutovacuumToggleRequest,
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    table = normalize_table_ident(payload.table)
+    async with pool.acquire() as conn:
+        before = await fetch_autovacuum_status(conn, table)
+        if payload.enabled:
+            await conn.execute(f"ALTER TABLE {table} RESET (autovacuum_enabled)")
+        else:
+            await conn.execute(f"ALTER TABLE {table} SET (autovacuum_enabled = false)")
+        after = await fetch_autovacuum_status(conn, table)
+        artifact = await write_artifact(
+            json.dumps({"before": before, "after": after}, indent=2),
+            "autovacuum_toggle",
+            "json",
+        )
+        exp_id = await insert_experiment(
+            conn,
+            "autovacuum_toggle",
+            {"table": table, "enabled": payload.enabled},
+            None,
+            artifact,
+        )
+    return {"status": "ok", "artifact": artifact, "experiment_id": exp_id, "data": after}
+
+
+def normalize_article_status(value: str) -> str:
+    status = value.strip().lower()
+    if status not in ("published", "draft", "archived"):
+        raise HTTPException(status_code=400, detail="status must be 'published', 'draft', or 'archived'")
+    return status
+
+
+@app.post("/api/admin/bulk_status_change/preview")
+async def bulk_status_change_preview(
+    payload: BulkStatusChangePreviewRequest,
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    source = normalize_article_status(payload.source_status)
+    normalize_article_status(payload.target_status)
+    async with pool.acquire() as conn:
+        count = await conn.fetchval(
+            "SELECT COUNT(*) FROM articles WHERE category_id = $1 AND status = $2",
+            payload.category_id,
+            source,
+        )
+    return {"status": "ok", "count": int(count or 0)}
+
+
+@app.post("/api/admin/bulk_status_change/apply")
+async def bulk_status_change_apply(
+    payload: BulkStatusChangePreviewRequest,
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    source = normalize_article_status(payload.source_status)
+    target = normalize_article_status(payload.target_status)
+    async with pool.acquire() as conn:
+        before = await capture_pg_stat(conn)
+        result = await conn.execute(
+            """
+            UPDATE articles
+            SET status = $3
+            WHERE category_id = $1
+              AND status = $2
+            """,
+            payload.category_id,
+            source,
+            target,
+        )
+        after = await capture_pg_stat(conn)
+
+        updated_rows = 0
+        try:
+            updated_rows = int((result or "").split()[-1])
+        except Exception:
+            updated_rows = 0
+
+        artifact = await write_artifact(
+            "-- pg_stat_before --\n"
+            + before
+            + "\n\n-- pg_stat_after --\n"
+            + after
+            + "\n\n-- result --\n"
+            + str(result),
+            "bulk_status_change",
+        )
+        exp_id = await insert_experiment(
+            conn,
+            "bulk_status_change",
+            {
+                "category_id": payload.category_id,
+                "source_status": source,
+                "target_status": target,
+                "updated_rows": updated_rows,
+            },
+            None,
+            artifact,
+        )
+    return {
+        "status": "ok",
+        "result": result,
+        "updated_rows": updated_rows,
+        "artifact": artifact,
+        "experiment_id": exp_id,
+    }
+
+
 async def load_test_job(target: str, concurrency: int, ops: int, pool: asyncpg.pool.Pool) -> None:
     start = local_now()
     errors = 0
@@ -717,8 +952,8 @@ async def load_test_job(target: str, concurrency: int, ops: int, pool: asyncpg.p
         "duration_sec": duration,
         "tps": tps,
         "errors": errors,
-        "started_at": start.isoformat(),
-        "ended_at": end.isoformat(),
+        "started_at": format_datetime(start),
+        "ended_at": format_datetime(end),
     }
     async with pool.acquire() as conn:
         artifact = await write_artifact(json.dumps(result, indent=2), "load_test", "json")
@@ -755,7 +990,7 @@ async def metrics_latest(
                 "SELECT * FROM experiment_results ORDER BY created_at DESC LIMIT $1",
                 limit,
             )
-    return {"rows": [dict(r) for r in rows]}
+    return serialize_datetimes({"rows": [dict(r) for r in rows]})
 
 
 @app.get("/api/metrics/artifact/{filename}")

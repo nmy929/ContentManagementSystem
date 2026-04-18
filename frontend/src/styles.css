@@ -73,6 +73,7 @@ button {
   color: white;
   border-radius: 4px;
   cursor: pointer;
+  font: inherit;
 }
 
 button.secondary {
@@ -86,6 +87,7 @@ button.secondary {
   background: var(--accent);
   color: white;
   text-decoration: none;
+  font: inherit;
 }
 
 .button-link.secondary {
@@ -94,6 +96,45 @@ button.secondary {
 
 .page-actions {
   margin-bottom: 16px;
+}
+
+.comment-form {
+  margin-bottom: 20px;
+}
+
+.comment-form button {
+  margin-top: 4px;
+}
+
+.comment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 720px) {
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kv-pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  white-space: pre-wrap;
 }
 
 .grid {
