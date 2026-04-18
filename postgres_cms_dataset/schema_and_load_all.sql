@@ -69,7 +69,7 @@ CREATE TABLE comments (
 CREATE TABLE article_views (
   view_id BIGSERIAL PRIMARY KEY,
   article_id BIGINT NOT NULL REFERENCES articles(article_id) ON DELETE CASCADE,
-  viewer_id BIGINT,
+  viewer_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
   viewed_at TIMESTAMP
 );
 

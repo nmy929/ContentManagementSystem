@@ -6,6 +6,7 @@ import subprocess
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import aiofiles
 import asyncpg
@@ -28,6 +29,7 @@ DB_NAME = os.getenv("DB_NAME", "d551")
 ROLE_AUTHOR = "author"
 ROLE_EDITOR = "editor"
 ROLE_ADMIN = "admin"
+APP_TIMEZONE = ZoneInfo("America/Los_Angeles")
 
 app = FastAPI(title="Postgres CMS")
 
@@ -67,6 +69,17 @@ class ArticleUpdate(BaseModel):
 
 class CommentCreate(BaseModel):
     content: str
+
+
+class CommentResponse(BaseModel):
+    comment_id: int
+    article_id: int
+    user_id: Optional[int] = None
+    username: Optional[str] = None
+    role: Optional[str] = None
+    content: str
+    created_at: Optional[datetime] = None
+    is_flagged: bool = False
 
 
 class BulkUnpublishRequest(BaseModel):
@@ -132,13 +145,13 @@ def require_roles(*roles: str):
     return _dependency
 
 
-def utcnow() -> datetime:
-    # Use naive UTC to match TIMESTAMP WITHOUT TIME ZONE columns in the dataset.
-    return datetime.utcnow()
+def local_now() -> datetime:
+    # Store Los Angeles local clock time while keeping a naive timestamp to match the dataset schema.
+    return datetime.now(APP_TIMEZONE).replace(tzinfo=None)
 
 
 def safe_filename(prefix: str, ext: str = "txt") -> str:
-    stamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
+    stamp = local_now().strftime("%Y%m%dT%H%M%S")
     return f"{prefix}_{stamp}_{uuid.uuid4().hex}.{ext}"
 
 
@@ -159,14 +172,15 @@ async def insert_experiment(
 ) -> int:
     row = await conn.fetchrow(
         """
-        INSERT INTO experiment_results (operation, params, explain_text, artifact_path)
-        VALUES ($1, $2::jsonb, $3, $4)
+        INSERT INTO experiment_results (operation, params, explain_text, artifact_path, created_at)
+        VALUES ($1, $2::jsonb, $3, $4, $5)
         RETURNING id
         """,
         operation,
         json.dumps(params),
         explain_text,
         artifact_path,
+        local_now(),
     )
     return row["id"]
 
@@ -238,7 +252,7 @@ async def login(payload: LoginRequest, pool: asyncpg.pool.Pool = Depends(get_poo
                 "user_id": row["user_id"],
                 "username": row["username"],
                 "role": row["role"],
-                "iat": int(utcnow().timestamp()),
+                "iat": int(datetime.now(APP_TIMEZONE).timestamp()),
             }
         )
         return LoginResponse(token=token, role=row["role"])
@@ -307,49 +321,54 @@ async def create_article(
     user: Dict[str, Any] = Depends(require_roles(ROLE_AUTHOR, ROLE_EDITOR, ROLE_ADMIN)),
     pool: asyncpg.pool.Pool = Depends(get_pool),
 ) -> Dict[str, Any]:
-    now = utcnow()
-    slug = re.sub(r"[^a-z0-9]+", "-", payload.title.lower()).strip("-")
+    now = local_now()
+    temp_slug = f"draft-{uuid.uuid4().hex}"
     async with pool.acquire() as conn:
         before = await capture_pg_stat(conn)
-        async with conn.transaction():
-            article_row = await conn.fetchrow(
-                """
-                INSERT INTO articles (author_id, category_id, status, title, slug, published_at, views_count, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7)
-                RETURNING article_id
-                """,
-                user["user_id"],
-                payload.category_id,
-                payload.status,
-                payload.title,
-                slug,
-                now if payload.status == "published" else None,
-                now,
-            )
-            article_id = article_row["article_id"]
-            revision_row = await conn.fetchrow(
-                """
-                INSERT INTO revisions (article_id, editor_id, title, content, created_at)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING revision_id
-                """,
-                article_id,
-                user["user_id"],
-                payload.title,
-                payload.content,
-                now,
-            )
-            await conn.execute(
-                "UPDATE articles SET current_rev = $1 WHERE article_id = $2",
-                revision_row["revision_id"],
-                article_id,
-            )
-            if payload.tags:
-                values = [(article_id, tag_id) for tag_id in payload.tags]
-                await conn.executemany(
-                    "INSERT INTO article_tags (article_id, tag_id) VALUES ($1, $2)",
-                    values,
+        try:
+            async with conn.transaction():
+                article_row = await conn.fetchrow(
+                    """
+                    INSERT INTO articles (author_id, category_id, status, title, slug, published_at, views_count, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7)
+                    RETURNING article_id
+                    """,
+                    user["user_id"],
+                    payload.category_id,
+                    payload.status,
+                    payload.title,
+                    temp_slug,
+                    now if payload.status == "published" else None,
+                    now,
                 )
+                article_id = article_row["article_id"]
+                slug = f"article-{article_id}"
+                revision_row = await conn.fetchrow(
+                    """
+                    INSERT INTO revisions (article_id, editor_id, title, content, created_at)
+                    VALUES ($1, $2, $3, $4, $5)
+                    RETURNING revision_id
+                    """,
+                    article_id,
+                    user["user_id"],
+                    payload.title,
+                    payload.content,
+                    now,
+                )
+                await conn.execute(
+                    "UPDATE articles SET current_rev = $1, slug = $2 WHERE article_id = $3",
+                    revision_row["revision_id"],
+                    slug,
+                    article_id,
+                )
+                if payload.tags:
+                    values = [(article_id, tag_id) for tag_id in payload.tags]
+                    await conn.executemany(
+                        "INSERT INTO article_tags (article_id, tag_id) VALUES ($1, $2)",
+                        values,
+                    )
+        except asyncpg.ForeignKeyViolationError as exc:
+            raise HTTPException(status_code=400, detail="Invalid category or tag ID.") from exc
 
         after = await capture_pg_stat(conn)
         artifact = await write_artifact(before + "\n\n" + after, "pgstat_article_create", "csv")
@@ -371,7 +390,7 @@ async def update_article(
     user: Dict[str, Any] = Depends(require_roles(ROLE_AUTHOR, ROLE_EDITOR, ROLE_ADMIN)),
     pool: asyncpg.pool.Pool = Depends(get_pool),
 ) -> Dict[str, Any]:
-    now = utcnow()
+    now = local_now()
     async with pool.acquire() as conn:
         before = await capture_pg_stat(conn)
         async with conn.transaction():
@@ -427,11 +446,23 @@ async def record_view(
     pool: asyncpg.pool.Pool = Depends(get_pool),
 ) -> Dict[str, Any]:
     async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO article_views (article_id, viewer_id, viewed_at) VALUES ($1, $2, NOW())",
-            article_id,
-            user["user_id"],
-        )
+        async with conn.transaction():
+            article_exists = await conn.fetchval(
+                "SELECT 1 FROM articles WHERE article_id = $1",
+                article_id,
+            )
+            if not article_exists:
+                raise HTTPException(status_code=404, detail="Not found")
+            await conn.execute(
+                "INSERT INTO article_views (article_id, viewer_id, viewed_at) VALUES ($1, $2, $3)",
+                article_id,
+                user["user_id"],
+                local_now(),
+            )
+            await conn.execute(
+                "UPDATE articles SET views_count = views_count + 1 WHERE article_id = $1",
+                article_id,
+            )
     return {"status": "ok"}
 
 
@@ -448,9 +479,36 @@ async def add_comment(
             article_id,
             user["user_id"],
             payload.content,
-            utcnow(),
+            local_now(),
         )
     return {"status": "ok"}
+
+
+@app.get("/api/articles/{article_id}/comments")
+async def list_comments(
+    article_id: int,
+    user: Dict[str, Any] = Depends(require_roles(ROLE_AUTHOR, ROLE_EDITOR, ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        article_exists = await conn.fetchval(
+            "SELECT 1 FROM articles WHERE article_id = $1",
+            article_id,
+        )
+        if not article_exists:
+            raise HTTPException(status_code=404, detail="Not found")
+        rows = await conn.fetch(
+            """
+            SELECT c.comment_id, c.article_id, c.user_id, u.username, u.role,
+                   c.content, c.created_at, c.is_flagged
+            FROM comments c
+            LEFT JOIN users u ON u.user_id = c.user_id
+            WHERE c.article_id = $1
+            ORDER BY c.created_at DESC, c.comment_id DESC
+            """,
+            article_id,
+        )
+    return {"rows": [dict(r) for r in rows]}
 
 
 @app.delete("/api/comments/{comment_id}")
@@ -497,7 +555,7 @@ async def bulk_unpublish(
     user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
     pool: asyncpg.pool.Pool = Depends(get_pool),
 ) -> Dict[str, Any]:
-    cutoff = utcnow() - timedelta(days=payload.older_than_days)
+    cutoff = local_now() - timedelta(days=payload.older_than_days)
     async with pool.acquire() as conn:
         before = await capture_pg_stat(conn)
         result = await conn.execute(
@@ -622,7 +680,7 @@ async def run_vacuum(
 
 
 async def load_test_job(target: str, concurrency: int, ops: int, pool: asyncpg.pool.Pool) -> None:
-    start = utcnow()
+    start = local_now()
     errors = 0
     async with pool.acquire() as conn:
         bounds = await conn.fetchrow("SELECT MIN(article_id) AS min_id, MAX(article_id) AS max_id FROM articles")
@@ -643,13 +701,13 @@ async def load_test_job(target: str, concurrency: int, ops: int, pool: asyncpg.p
                         "INSERT INTO article_views (article_id, viewer_id, viewed_at) VALUES ($1, $2, $3)",
                         article_id,
                         viewer_id,
-                        utcnow(),
+                        local_now(),
                     )
             except Exception:
                 errors += 1
 
     await asyncio.gather(*[insert_one(i) for i in range(ops)])
-    end = utcnow()
+    end = local_now()
     duration = (end - start).total_seconds()
     tps = ops / duration if duration > 0 else 0
     result = {

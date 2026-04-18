@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useParams } from 'react-router-dom';
 import api from '../api';
 
 export default function Editor({ role }) {
   const { id } = useParams();
+  const navigate = useNavigate();
   const isEdit = Boolean(id);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -33,17 +35,32 @@ export default function Editor({ role }) {
 
   const create = async () => {
     setMessage('');
+    const trimmedTitle = title.trim();
+    const trimmedContent = content.trim();
+    const categoryNum = Number(categoryId);
+
+    if (!trimmedTitle) {
+      setMessage('Title is required.');
+      return;
+    }
+
+    if (!Number.isInteger(categoryNum) || categoryNum <= 0) {
+      setMessage('Category ID must be a positive integer.');
+      return;
+    }
+
     try {
       const res = await api.post('/api/articles', {
-        title,
-        content,
-        category_id: Number(categoryId),
+        title: trimmedTitle,
+        content: trimmedContent,
+        category_id: categoryNum,
         tags: [],
         status
       });
       setMessage(`Created article ${res.data.article_id}`);
+      navigate(`/articles/${res.data.article_id}`);
     } catch (err) {
-      setMessage('Create failed.');
+      setMessage(err.response?.data?.detail || 'Create failed.');
     }
   };
 
@@ -55,6 +72,7 @@ export default function Editor({ role }) {
         content
       });
       setMessage('Updated article.');
+      navigate(`/articles/${id}`);
     } catch (err) {
       setMessage('Update failed.');
     }
@@ -73,8 +91,11 @@ export default function Editor({ role }) {
         <input value={title} onChange={(e) => setTitle(e.target.value)} />
         <label>Content</label>
         <textarea rows="8" value={content} onChange={(e) => setContent(e.target.value)} />
-        <button className="secondary" onClick={update} disabled={loading}>
+        <button onClick={update} disabled={loading}>
           Save Revision
+        </button>
+        <button className="secondary" onClick={() => navigate(`/articles/${id}`)} disabled={loading}>
+          Back to Article
         </button>
         {message && <p>{message}</p>}
       </div>

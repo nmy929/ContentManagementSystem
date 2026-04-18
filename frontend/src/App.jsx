@@ -33,6 +33,7 @@ export default function App() {
   const handleLogin = (newToken, newRole) => {
     localStorage.setItem('token', newToken);
     localStorage.setItem('role', newRole);
+    setToken(newToken);
     setAuthToken(newToken);
     setRole(newRole);
     navigate('/');

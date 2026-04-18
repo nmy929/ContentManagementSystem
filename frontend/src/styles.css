@@ -79,6 +79,23 @@ button.secondary {
   background: #6b705c;
 }
 
+.button-link {
+  display: inline-block;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: white;
+  text-decoration: none;
+}
+
+.button-link.secondary {
+  background: #6b705c;
+}
+
+.page-actions {
+  margin-bottom: 16px;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

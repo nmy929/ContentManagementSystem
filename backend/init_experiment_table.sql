@@ -4,5 +4,5 @@ CREATE TABLE IF NOT EXISTS experiment_results (
   params JSONB,
   explain_text TEXT,
   artifact_path TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'America/Los_Angeles')
 );
