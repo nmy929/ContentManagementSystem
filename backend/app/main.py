@@ -6,6 +6,7 @@ import subprocess
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import aiofiles
 import asyncpg
@@ -34,6 +35,7 @@ BTREE_BENCHMARK_INDEX_SQL = (
     "ON articles(category_id, published_at DESC) "
     "INCLUDE (title)"
 )
+APP_TIMEZONE = ZoneInfo("America/Los_Angeles")
 
 app = FastAPI(title="Postgres CMS")
 
@@ -75,6 +77,21 @@ class CommentCreate(BaseModel):
     content: str
 
 
+class CommentFlagUpdate(BaseModel):
+    is_flagged: bool
+
+
+class CommentResponse(BaseModel):
+    comment_id: int
+    article_id: int
+    user_id: Optional[int] = None
+    username: Optional[str] = None
+    role: Optional[str] = None
+    content: str
+    created_at: Optional[datetime] = None
+    is_flagged: bool = False
+
+
 class BulkUnpublishRequest(BaseModel):
     category_id: int
     older_than_days: int
@@ -103,6 +120,38 @@ class GinBenchmarkRequest(BaseModel):
     tag_ids: List[int]
     mode: str = "all"
     runs: int = 3
+
+
+class AutovacuumToggleRequest(BaseModel):
+    table: str
+    enabled: bool
+
+
+class BulkStatusChangePreviewRequest(BaseModel):
+    category_id: int
+    source_status: str
+    target_status: str
+
+
+TABLE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)?$")
+
+
+def normalize_table_ident(table: str) -> str:
+    value = table.strip()
+    if not TABLE_IDENT_RE.match(value):
+        raise HTTPException(status_code=400, detail="Invalid table name")
+    return value
+
+
+def parse_reloptions_autovacuum_enabled(reloptions: Optional[List[str]]) -> Optional[bool]:
+    if not reloptions:
+        return None
+    for opt in reloptions:
+        if opt == "autovacuum_enabled=false":
+            return False
+        if opt == "autovacuum_enabled=true":
+            return True
+    return None
 
 
 async def get_pool() -> asyncpg.pool.Pool:
@@ -144,13 +193,27 @@ def require_roles(*roles: str):
     return _dependency
 
 
-def utcnow() -> datetime:
-    # Use naive UTC to match TIMESTAMP WITHOUT TIME ZONE columns in the dataset.
-    return datetime.utcnow()
+def local_now() -> datetime:
+    # Store Los Angeles local clock time while keeping a naive timestamp to match the dataset schema.
+    return datetime.now(APP_TIMEZONE).replace(tzinfo=None)
+
+
+def format_datetime(value: datetime) -> str:
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def serialize_datetimes(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return format_datetime(value)
+    if isinstance(value, dict):
+        return {key: serialize_datetimes(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [serialize_datetimes(item) for item in value]
+    return value
 
 
 def safe_filename(prefix: str, ext: str = "txt") -> str:
-    stamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
+    stamp = local_now().strftime("%Y%m%dT%H%M%S")
     return f"{prefix}_{stamp}_{uuid.uuid4().hex}.{ext}"
 
 
@@ -171,14 +234,15 @@ async def insert_experiment(
 ) -> int:
     row = await conn.fetchrow(
         """
-        INSERT INTO experiment_results (operation, params, explain_text, artifact_path)
-        VALUES ($1, $2::jsonb, $3, $4)
+        INSERT INTO experiment_results (operation, params, explain_text, artifact_path, created_at)
+        VALUES ($1, $2::jsonb, $3, $4, $5)
         RETURNING id
         """,
         operation,
         json.dumps(params),
         explain_text,
         artifact_path,
+        local_now(),
     )
     return row["id"]
 
@@ -367,7 +431,7 @@ async def login(payload: LoginRequest, pool: asyncpg.pool.Pool = Depends(get_poo
                 "user_id": row["user_id"],
                 "username": row["username"],
                 "role": row["role"],
-                "iat": int(utcnow().timestamp()),
+                "iat": int(datetime.now(APP_TIMEZONE).timestamp()),
             }
         )
         return LoginResponse(token=token, role=row["role"])
@@ -405,7 +469,7 @@ async def get_articles(
     response: Dict[str, Any] = {"rows": data, "explain_artifact": explain_info["artifact"]}
     if user["role"] == ROLE_ADMIN:
         response["explain_text"] = explain_info["explain_text"]
-    return response
+    return serialize_datetimes(response)
 
 
 @app.get("/api/tags")
@@ -491,7 +555,7 @@ async def get_article(
         )
         if not row:
             raise HTTPException(status_code=404, detail="Not found")
-        return dict(row)
+        return serialize_datetimes(dict(row))
 
 
 @app.post("/api/articles")
@@ -500,49 +564,54 @@ async def create_article(
     user: Dict[str, Any] = Depends(require_roles(ROLE_AUTHOR, ROLE_EDITOR, ROLE_ADMIN)),
     pool: asyncpg.pool.Pool = Depends(get_pool),
 ) -> Dict[str, Any]:
-    now = utcnow()
-    slug = re.sub(r"[^a-z0-9]+", "-", payload.title.lower()).strip("-")
+    now = local_now()
+    temp_slug = f"draft-{uuid.uuid4().hex}"
     async with pool.acquire() as conn:
         before = await capture_pg_stat(conn)
-        async with conn.transaction():
-            article_row = await conn.fetchrow(
-                """
-                INSERT INTO articles (author_id, category_id, status, title, slug, published_at, views_count, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7)
-                RETURNING article_id
-                """,
-                user["user_id"],
-                payload.category_id,
-                payload.status,
-                payload.title,
-                slug,
-                now if payload.status == "published" else None,
-                now,
-            )
-            article_id = article_row["article_id"]
-            revision_row = await conn.fetchrow(
-                """
-                INSERT INTO revisions (article_id, editor_id, title, content, created_at)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING revision_id
-                """,
-                article_id,
-                user["user_id"],
-                payload.title,
-                payload.content,
-                now,
-            )
-            await conn.execute(
-                "UPDATE articles SET current_rev = $1 WHERE article_id = $2",
-                revision_row["revision_id"],
-                article_id,
-            )
-            if payload.tags:
-                values = [(article_id, tag_id) for tag_id in payload.tags]
-                await conn.executemany(
-                    "INSERT INTO article_tags (article_id, tag_id) VALUES ($1, $2)",
-                    values,
+        try:
+            async with conn.transaction():
+                article_row = await conn.fetchrow(
+                    """
+                    INSERT INTO articles (author_id, category_id, status, title, slug, published_at, views_count, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7)
+                    RETURNING article_id
+                    """,
+                    user["user_id"],
+                    payload.category_id,
+                    payload.status,
+                    payload.title,
+                    temp_slug,
+                    now if payload.status == "published" else None,
+                    now,
                 )
+                article_id = article_row["article_id"]
+                slug = f"article-{article_id}"
+                revision_row = await conn.fetchrow(
+                    """
+                    INSERT INTO revisions (article_id, editor_id, title, content, created_at)
+                    VALUES ($1, $2, $3, $4, $5)
+                    RETURNING revision_id
+                    """,
+                    article_id,
+                    user["user_id"],
+                    payload.title,
+                    payload.content,
+                    now,
+                )
+                await conn.execute(
+                    "UPDATE articles SET current_rev = $1, slug = $2 WHERE article_id = $3",
+                    revision_row["revision_id"],
+                    slug,
+                    article_id,
+                )
+                if payload.tags:
+                    values = [(article_id, tag_id) for tag_id in payload.tags]
+                    await conn.executemany(
+                        "INSERT INTO article_tags (article_id, tag_id) VALUES ($1, $2)",
+                        values,
+                    )
+        except asyncpg.ForeignKeyViolationError as exc:
+            raise HTTPException(status_code=400, detail="Invalid category or tag ID.") from exc
 
         after = await capture_pg_stat(conn)
         artifact = await write_artifact(before + "\n\n" + after, "pgstat_article_create", "csv")
@@ -564,7 +633,7 @@ async def update_article(
     user: Dict[str, Any] = Depends(require_roles(ROLE_AUTHOR, ROLE_EDITOR, ROLE_ADMIN)),
     pool: asyncpg.pool.Pool = Depends(get_pool),
 ) -> Dict[str, Any]:
-    now = utcnow()
+    now = local_now()
     async with pool.acquire() as conn:
         before = await capture_pg_stat(conn)
         async with conn.transaction():
@@ -620,11 +689,23 @@ async def record_view(
     pool: asyncpg.pool.Pool = Depends(get_pool),
 ) -> Dict[str, Any]:
     async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO article_views (article_id, viewer_id, viewed_at) VALUES ($1, $2, NOW())",
-            article_id,
-            user["user_id"],
-        )
+        async with conn.transaction():
+            article_exists = await conn.fetchval(
+                "SELECT 1 FROM articles WHERE article_id = $1",
+                article_id,
+            )
+            if not article_exists:
+                raise HTTPException(status_code=404, detail="Not found")
+            await conn.execute(
+                "INSERT INTO article_views (article_id, viewer_id, viewed_at) VALUES ($1, $2, $3)",
+                article_id,
+                user["user_id"],
+                local_now(),
+            )
+            await conn.execute(
+                "UPDATE articles SET views_count = views_count + 1 WHERE article_id = $1",
+                article_id,
+            )
     return {"status": "ok"}
 
 
@@ -641,9 +722,36 @@ async def add_comment(
             article_id,
             user["user_id"],
             payload.content,
-            utcnow(),
+            local_now(),
         )
     return {"status": "ok"}
+
+
+@app.get("/api/articles/{article_id}/comments")
+async def list_comments(
+    article_id: int,
+    user: Dict[str, Any] = Depends(require_roles(ROLE_AUTHOR, ROLE_EDITOR, ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        article_exists = await conn.fetchval(
+            "SELECT 1 FROM articles WHERE article_id = $1",
+            article_id,
+        )
+        if not article_exists:
+            raise HTTPException(status_code=404, detail="Not found")
+        rows = await conn.fetch(
+            """
+            SELECT c.comment_id, c.article_id, c.user_id, u.username, u.role,
+                   c.content, c.created_at, c.is_flagged
+            FROM comments c
+            LEFT JOIN users u ON u.user_id = c.user_id
+            WHERE c.article_id = $1
+            ORDER BY c.created_at DESC, c.comment_id DESC
+            """,
+            article_id,
+        )
+    return serialize_datetimes({"rows": [dict(r) for r in rows]})
 
 
 @app.delete("/api/comments/{comment_id}")
@@ -655,6 +763,29 @@ async def delete_comment(
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM comments WHERE comment_id = $1", comment_id)
     return {"status": "ok"}
+
+
+@app.patch("/api/comments/{comment_id}/flag")
+async def update_comment_flag(
+    comment_id: int,
+    payload: CommentFlagUpdate,
+    user: Dict[str, Any] = Depends(require_roles(ROLE_EDITOR, ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        article_id = await conn.fetchval(
+            """
+            UPDATE comments
+            SET is_flagged = $1
+            WHERE comment_id = $2
+            RETURNING article_id
+            """,
+            payload.is_flagged,
+            comment_id,
+        )
+        if article_id is None:
+            raise HTTPException(status_code=404, detail="Comment not found")
+    return {"status": "ok", "comment_id": comment_id, "article_id": article_id, "is_flagged": payload.is_flagged}
 
 
 @app.get("/api/search")
@@ -681,7 +812,7 @@ async def search_articles(
     response = {"rows": [dict(r) for r in rows], "explain_artifact": explain_info["artifact"]}
     if user["role"] == ROLE_ADMIN:
         response["explain_text"] = explain_info["explain_text"]
-    return response
+    return serialize_datetimes(response)
 
 
 @app.post("/api/admin/bulk_unpublish")
@@ -690,7 +821,7 @@ async def bulk_unpublish(
     user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
     pool: asyncpg.pool.Pool = Depends(get_pool),
 ) -> Dict[str, Any]:
-    cutoff = utcnow() - timedelta(days=payload.older_than_days)
+    cutoff = local_now() - timedelta(days=payload.older_than_days)
     async with pool.acquire() as conn:
         before = await capture_pg_stat(conn)
         result = await conn.execute(
@@ -814,8 +945,170 @@ async def run_vacuum(
     return {"status": "ok", "artifact": artifact, "experiment_id": exp_id}
 
 
+async def fetch_autovacuum_status(conn: asyncpg.Connection, table: str) -> Dict[str, Any]:
+    global_autovacuum = await conn.fetchval("SELECT current_setting('autovacuum')")
+    global_naptime = await conn.fetchval("SELECT current_setting('autovacuum_naptime')")
+
+    relid = await conn.fetchval("SELECT to_regclass($1)", table)
+    if not relid:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    reloptions = await conn.fetchval(
+        "SELECT reloptions FROM pg_class WHERE oid = to_regclass($1)",
+        table,
+    )
+    table_setting = parse_reloptions_autovacuum_enabled(reloptions)
+    effective_enabled = (global_autovacuum == "on") and (table_setting is not False)
+
+    stat_row = await conn.fetchrow(
+        """
+        SELECT n_live_tup, n_dead_tup, last_autovacuum, last_vacuum, autovacuum_count, vacuum_count
+        FROM pg_stat_user_tables
+        WHERE relid = to_regclass($1)
+        """,
+        table,
+    )
+    stat = dict(stat_row) if stat_row else {}
+
+    return serialize_datetimes(
+        {
+            "table": table,
+            "global_autovacuum": global_autovacuum,
+            "global_autovacuum_naptime": global_naptime,
+            "reloptions": reloptions or [],
+            "table_autovacuum_enabled_setting": table_setting,
+            "effective_autovacuum_enabled": effective_enabled,
+            "pg_stat_user_tables": stat,
+        }
+    )
+
+
+@app.get("/api/admin/autovacuum_status")
+async def autovacuum_status(
+    table: str = "articles",
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    normalized = normalize_table_ident(table)
+    async with pool.acquire() as conn:
+        status = await fetch_autovacuum_status(conn, normalized)
+    return {"status": "ok", "data": status}
+
+
+@app.post("/api/admin/set_autovacuum")
+async def set_autovacuum(
+    payload: AutovacuumToggleRequest,
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    table = normalize_table_ident(payload.table)
+    async with pool.acquire() as conn:
+        before = await fetch_autovacuum_status(conn, table)
+        if payload.enabled:
+            await conn.execute(f"ALTER TABLE {table} RESET (autovacuum_enabled)")
+        else:
+            await conn.execute(f"ALTER TABLE {table} SET (autovacuum_enabled = false)")
+        after = await fetch_autovacuum_status(conn, table)
+        artifact = await write_artifact(
+            json.dumps({"before": before, "after": after}, indent=2),
+            "autovacuum_toggle",
+            "json",
+        )
+        exp_id = await insert_experiment(
+            conn,
+            "autovacuum_toggle",
+            {"table": table, "enabled": payload.enabled},
+            None,
+            artifact,
+        )
+    return {"status": "ok", "artifact": artifact, "experiment_id": exp_id, "data": after}
+
+
+def normalize_article_status(value: str) -> str:
+    status = value.strip().lower()
+    if status not in ("published", "draft", "archived"):
+        raise HTTPException(status_code=400, detail="status must be 'published', 'draft', or 'archived'")
+    return status
+
+
+@app.post("/api/admin/bulk_status_change/preview")
+async def bulk_status_change_preview(
+    payload: BulkStatusChangePreviewRequest,
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    source = normalize_article_status(payload.source_status)
+    normalize_article_status(payload.target_status)
+    async with pool.acquire() as conn:
+        count = await conn.fetchval(
+            "SELECT COUNT(*) FROM articles WHERE category_id = $1 AND status = $2",
+            payload.category_id,
+            source,
+        )
+    return {"status": "ok", "count": int(count or 0)}
+
+
+@app.post("/api/admin/bulk_status_change/apply")
+async def bulk_status_change_apply(
+    payload: BulkStatusChangePreviewRequest,
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    source = normalize_article_status(payload.source_status)
+    target = normalize_article_status(payload.target_status)
+    async with pool.acquire() as conn:
+        before = await capture_pg_stat(conn)
+        result = await conn.execute(
+            """
+            UPDATE articles
+            SET status = $3
+            WHERE category_id = $1
+              AND status = $2
+            """,
+            payload.category_id,
+            source,
+            target,
+        )
+        after = await capture_pg_stat(conn)
+
+        updated_rows = 0
+        try:
+            updated_rows = int((result or "").split()[-1])
+        except Exception:
+            updated_rows = 0
+
+        artifact = await write_artifact(
+            "-- pg_stat_before --\n"
+            + before
+            + "\n\n-- pg_stat_after --\n"
+            + after
+            + "\n\n-- result --\n"
+            + str(result),
+            "bulk_status_change",
+        )
+        exp_id = await insert_experiment(
+            conn,
+            "bulk_status_change",
+            {
+                "category_id": payload.category_id,
+                "source_status": source,
+                "target_status": target,
+                "updated_rows": updated_rows,
+            },
+            None,
+            artifact,
+        )
+    return {
+        "status": "ok",
+        "result": result,
+        "updated_rows": updated_rows,
+        "artifact": artifact,
+        "experiment_id": exp_id,
+    }
+
+
 async def load_test_job(target: str, concurrency: int, ops: int, pool: asyncpg.pool.Pool) -> None:
-    start = utcnow()
+    start = local_now()
     errors = 0
     async with pool.acquire() as conn:
         bounds = await conn.fetchrow("SELECT MIN(article_id) AS min_id, MAX(article_id) AS max_id FROM articles")
@@ -836,13 +1129,13 @@ async def load_test_job(target: str, concurrency: int, ops: int, pool: asyncpg.p
                         "INSERT INTO article_views (article_id, viewer_id, viewed_at) VALUES ($1, $2, $3)",
                         article_id,
                         viewer_id,
-                        utcnow(),
+                        local_now(),
                     )
             except Exception:
                 errors += 1
 
     await asyncio.gather(*[insert_one(i) for i in range(ops)])
-    end = utcnow()
+    end = local_now()
     duration = (end - start).total_seconds()
     tps = ops / duration if duration > 0 else 0
     result = {
@@ -852,8 +1145,8 @@ async def load_test_job(target: str, concurrency: int, ops: int, pool: asyncpg.p
         "duration_sec": duration,
         "tps": tps,
         "errors": errors,
-        "started_at": start.isoformat(),
-        "ended_at": end.isoformat(),
+        "started_at": format_datetime(start),
+        "ended_at": format_datetime(end),
     }
     async with pool.acquire() as conn:
         artifact = await write_artifact(json.dumps(result, indent=2), "load_test", "json")
@@ -869,6 +1162,57 @@ async def run_load_test(
 ) -> Dict[str, Any]:
     background_tasks.add_task(load_test_job, payload.target, payload.concurrency, payload.ops, pool)
     return {"status": "queued"}
+
+
+@app.get("/api/admin/article_views_snapshot")
+async def article_views_snapshot(
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        count = await conn.fetchval("SELECT COUNT(*) FROM article_views")
+        wal_lsn = await conn.fetchval("SELECT pg_current_wal_lsn()")
+    return serialize_datetimes(
+        {
+            "status": "ok",
+            "data": {
+                "count": int(count or 0),
+                "wal_lsn": str(wal_lsn) if wal_lsn is not None else None,
+                "captured_at": local_now(),
+            },
+        }
+    )
+
+
+@app.get("/api/admin/articles_mvcc_sample")
+async def articles_mvcc_sample(
+    category_id: int = Query(..., ge=1),
+    limit: int = Query(5, ge=1, le=50),
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT article_id,
+                   ctid::text AS ctid,
+                   xmin::text AS xmin,
+                   xmax::text AS xmax,
+                   status
+            FROM articles
+            WHERE category_id = $1
+            ORDER BY article_id
+            LIMIT $2
+            """,
+            category_id,
+            limit,
+        )
+    return serialize_datetimes(
+        {
+            "status": "ok",
+            "data": {"rows": [dict(r) for r in rows], "captured_at": local_now()},
+        }
+    )
 
 
 @app.post("/api/admin/tags_index/create")
@@ -1097,7 +1441,7 @@ async def metrics_latest(
                 "SELECT * FROM experiment_results ORDER BY created_at DESC LIMIT $1",
                 limit,
             )
-    return {"rows": [dict(r) for r in rows]}
+    return serialize_datetimes({"rows": [dict(r) for r in rows]})
 
 
 @app.get("/api/metrics/artifact/{filename}")

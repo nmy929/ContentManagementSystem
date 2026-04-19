@@ -43,7 +43,7 @@ Password is the same as the username.
 
 ## Running the Full Demo Script
 
-This script loads data (if needed), runs feed explain, performs edits, bulk unpublish, load test, and bundles artifacts into a zip.
+This script loads data (if needed), runs feed explain, performs edits, bulk status change, load test, and bundles artifacts into a zip.
 
 ```bash
 ./scripts/run_full_demo.sh
@@ -63,7 +63,8 @@ Output zip:
 ## Admin Operations (UI)
 
 - Run EXPLAIN: `Admin -> EXPLAIN Runner`
-- Bulk unpublish: `Admin -> Bulk Unpublish`
+- Autovacuum toggle: `Admin -> Autovacuum`
+- Bulk status change: `Admin -> Bulk Status Change` (Preview/Apply, source -> target)
 - Drop/Create index: `Admin -> Index Control`
 - VACUUM: `Admin -> VACUUM`
 - Load test: `Admin -> Load Test`
@@ -126,7 +127,7 @@ http://localhost:5173
 
 - Feed -> "Refresh Feed" to collect EXPLAIN
 - Admin -> EXPLAIN Runner for custom SQL
-- Admin -> Bulk Unpublish and VACUUM
+- Admin -> Bulk Status Change (Preview/Apply), then (optional) VACUUM
 
 6. Download artifacts (admin only):
 

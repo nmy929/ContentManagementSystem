@@ -73,10 +73,100 @@ button {
   color: white;
   border-radius: 4px;
   cursor: pointer;
+  font: inherit;
 }
 
 button.secondary {
   background: #6b705c;
+}
+
+.button-link {
+  display: inline-block;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: white;
+  text-decoration: none;
+  font: inherit;
+}
+
+.button-link.secondary {
+  background: #6b705c;
+}
+
+.page-actions {
+  margin-bottom: 16px;
+}
+
+.comment-form {
+  margin-bottom: 20px;
+}
+
+.comment-form button {
+  margin-top: 4px;
+}
+
+.comment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.button-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 720px) {
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kv-pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  white-space: pre-wrap;
+}
+
+.kv-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fbf8f2;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.kv-table th,
+.kv-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.kv-table thead th {
+  background: #f7f1e3;
+  font-weight: 700;
+}
+
+.kv-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .grid {

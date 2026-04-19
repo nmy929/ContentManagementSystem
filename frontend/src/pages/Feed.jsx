@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
 import TagMultiSelect from '../components/TagMultiSelect';
+import formatDateTime from '../utils/formatDateTime';
 
 export default function Feed({ role }) {
   const [rows, setRows] = useState([]);
@@ -106,7 +107,7 @@ export default function Feed({ role }) {
           <div className="card" key={row.article_id}>
             <h3>{row.title}</h3>
             <p>Author: {row.author_id}</p>
-            <p>Published: {row.published_at || 'N/A'}</p>
+            <p>Published: {formatDateTime(row.published_at) || 'N/A'}</p>
             {row.tag_names && row.tag_names.length > 0 && (
               <p>Tags: {row.tag_names.join(', ')}</p>
             )}
