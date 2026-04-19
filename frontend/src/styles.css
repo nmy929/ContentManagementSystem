@@ -120,6 +120,12 @@ button.secondary {
   align-items: center;
 }
 
+.button-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .two-col {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -135,6 +141,32 @@ button.secondary {
 .kv-pre {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   white-space: pre-wrap;
+}
+
+.kv-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fbf8f2;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.kv-table th,
+.kv-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.kv-table thead th {
+  background: #f7f1e3;
+  font-weight: 700;
+}
+
+.kv-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .grid {

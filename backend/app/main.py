@@ -971,6 +971,57 @@ async def run_load_test(
     return {"status": "queued"}
 
 
+@app.get("/api/admin/article_views_snapshot")
+async def article_views_snapshot(
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        count = await conn.fetchval("SELECT COUNT(*) FROM article_views")
+        wal_lsn = await conn.fetchval("SELECT pg_current_wal_lsn()")
+    return serialize_datetimes(
+        {
+            "status": "ok",
+            "data": {
+                "count": int(count or 0),
+                "wal_lsn": str(wal_lsn) if wal_lsn is not None else None,
+                "captured_at": local_now(),
+            },
+        }
+    )
+
+
+@app.get("/api/admin/articles_mvcc_sample")
+async def articles_mvcc_sample(
+    category_id: int = Query(..., ge=1),
+    limit: int = Query(5, ge=1, le=50),
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT article_id,
+                   ctid::text AS ctid,
+                   xmin::text AS xmin,
+                   xmax::text AS xmax,
+                   status
+            FROM articles
+            WHERE category_id = $1
+            ORDER BY article_id
+            LIMIT $2
+            """,
+            category_id,
+            limit,
+        )
+    return serialize_datetimes(
+        {
+            "status": "ok",
+            "data": {"rows": [dict(r) for r in rows], "captured_at": local_now()},
+        }
+    )
+
+
 @app.get("/api/metrics/latest")
 async def metrics_latest(
     operation: Optional[str] = None,

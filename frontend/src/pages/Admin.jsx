@@ -11,12 +11,17 @@ export default function Admin({ role }) {
   const [bulkSourceStatus, setBulkSourceStatus] = useState('published');
   const [bulkTargetStatus, setBulkTargetStatus] = useState('archived');
   const [bulkPreviewCount, setBulkPreviewCount] = useState(null);
+  const [bulkMvccBefore, setBulkMvccBefore] = useState(null);
+  const [bulkMvccAfter, setBulkMvccAfter] = useState(null);
   const [indexSql, setIndexSql] = useState('CREATE INDEX idx_articles_published_at ON articles(published_at DESC);');
   const [autovacuumEnabled, setAutovacuumEnabled] = useState(true);
   const [autovacuumStatus, setAutovacuumStatus] = useState(null);
   const [concurrency, setConcurrency] = useState('100');
   const [ops, setOps] = useState('1000');
   const [loadTestResult, setLoadTestResult] = useState(null);
+  const [loadTestResultId, setLoadTestResultId] = useState(null);
+  const [loadTestBefore, setLoadTestBefore] = useState(null);
+  const [loadTestAfter, setLoadTestAfter] = useState(null);
   const [message, setMessage] = useState('');
 
   const normalizeJsonParams = (value) => {
@@ -35,6 +40,16 @@ export default function Admin({ role }) {
   const loadMetrics = async () => {
     const res = await api.get('/api/metrics/latest');
     setMetrics(res.data.rows || []);
+  };
+
+  const fetchArticleViewsSnapshot = async () => {
+    const res = await api.get('/api/admin/article_views_snapshot');
+    return res.data?.data || null;
+  };
+
+  const fetchArticlesMvccSample = async ({ category_id, limit = 5 }) => {
+    const res = await api.get('/api/admin/articles_mvcc_sample', { params: { category_id, limit } });
+    return res.data?.data || null;
   };
 
   useEffect(() => {
@@ -70,17 +85,19 @@ export default function Admin({ role }) {
     const res = await api.get('/api/metrics/latest', { params: { operation: 'load_test', limit: 1 } });
     const row = res.data?.rows?.[0];
     setLoadTestResult(normalizeJsonParams(row?.params));
+    setLoadTestResultId(row?.id ?? null);
   };
 
-  const pollLatestLoadTest = async ({ timeoutMs = 15000, intervalMs = 1000 } = {}) => {
+  const pollLatestLoadTest = async ({ afterId = null, timeoutMs = 15000, intervalMs = 1000 } = {}) => {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       try {
         const res = await api.get('/api/metrics/latest', { params: { operation: 'load_test', limit: 1 } });
         const row = res.data?.rows?.[0];
         const parsed = normalizeJsonParams(row?.params);
-        if (parsed) {
+        if (parsed && (afterId == null || (row?.id != null && row.id > afterId))) {
           setLoadTestResult(parsed);
+          setLoadTestResultId(row?.id ?? null);
           return;
         }
       } catch (e) {
@@ -106,6 +123,14 @@ export default function Admin({ role }) {
   const previewBulkStatusChange = async () => {
     setMessage('');
     setBulkPreviewCount(null);
+    setBulkMvccBefore(null);
+    setBulkMvccAfter(null);
+    try {
+      const before = await fetchArticlesMvccSample({ category_id: Number(categoryId), limit: 5 });
+      setBulkMvccBefore(before);
+    } catch (e) {
+      setBulkMvccBefore(null);
+    }
     const res = await api.post('/api/admin/bulk_status_change/preview', {
       category_id: Number(categoryId),
       source_status: bulkSourceStatus,
@@ -113,6 +138,34 @@ export default function Admin({ role }) {
     });
     setBulkPreviewCount(res.data.count);
     setMessage(`Preview: will update ${res.data.count} rows`);
+  };
+
+  const renderMvccTable = (rows) => {
+    if (!rows || rows.length === 0) return <div style={{ color: '#6b6b6b' }}>No rows</div>;
+    return (
+      <table className="kv-table">
+        <thead>
+          <tr>
+            <th>article_id</th>
+            <th>ctid</th>
+            <th>xmin</th>
+            <th>xmax</th>
+            <th>status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={`${r.article_id}-${r.ctid}`}>
+              <td>{r.article_id}</td>
+              <td>{r.ctid}</td>
+              <td>{r.xmin}</td>
+              <td>{r.xmax}</td>
+              <td>{r.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
   };
 
   const applyBulkStatusChange = async () => {
@@ -125,6 +178,12 @@ export default function Admin({ role }) {
       target_status: bulkTargetStatus
     });
     setMessage(`Bulk status change done (${res.data.updated_rows}). Artifact: ${res.data.artifact}`);
+    try {
+      const after = await fetchArticlesMvccSample({ category_id: Number(categoryId), limit: 5 });
+      setBulkMvccAfter(after);
+    } catch (e) {
+      setBulkMvccAfter(null);
+    }
     fetchStorageStatus({ silent: true });
     loadMetrics();
   };
@@ -153,14 +212,16 @@ export default function Admin({ role }) {
 
   const runLoadTest = async () => {
     setMessage('');
+    const latest = await api.get('/api/metrics/latest', { params: { operation: 'load_test', limit: 1 } });
+    const prevId = latest.data?.rows?.[0]?.id ?? null;
     const res = await api.post('/api/admin/run_load_test', {
       target: 'article_views',
-      concurrency: Number(concurrency),
-      ops: Number(ops)
+      concurrency: 100,
+      ops: 1000
     });
     setMessage(`Load test ${res.data.status}`);
     fetchStorageStatus({ silent: true });
-    pollLatestLoadTest();
+    await pollLatestLoadTest({ afterId: prevId });
   };
 
   const storageLive = autovacuumStatus?.pg_stat_user_tables?.n_live_tup;
@@ -187,6 +248,64 @@ export default function Admin({ role }) {
           <button onClick={runCreateIndex}>Create Index</button>
           <button className="secondary" onClick={runDropIndex}>Drop Index (simple replace)</button>
         </div>
+      </div>
+
+      <div className="card">
+        <h2>Load Test</h2>
+        <label>Concurrency</label>
+        <input value={concurrency} onChange={(e) => setConcurrency(e.target.value)} disabled />
+        <label>Ops</label>
+        <input value={ops} onChange={(e) => setOps(e.target.value)} disabled />
+        <div className="button-stack">
+          <div className="button-row">
+            <button
+              className="secondary"
+              onClick={async () => {
+                setMessage('');
+                const snap = await fetchArticleViewsSnapshot();
+                setLoadTestBefore(snap);
+                setMessage('Captured Before load test snapshot');
+              }}
+            >
+              Capture Before
+            </button>
+            <button
+              className="secondary"
+              onClick={async () => {
+                setMessage('');
+                const snap = await fetchArticleViewsSnapshot();
+                setLoadTestAfter(snap);
+                setMessage('Captured After load test snapshot');
+              }}
+            >
+              Capture After
+            </button>
+          </div>
+          <div className="button-row">
+            <button onClick={runLoadTest}>Run Load Test</button>
+            <button className="secondary" onClick={() => loadLatestLoadTest()}>Refresh Result</button>
+          </div>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <h3 style={{ marginBottom: 6 }}>Before/After: article_views count + WAL LSN</h3>
+          <div className="two-col">
+            <pre className="kv-pre">{`Before load test:\nselect count(*) from article_views;\nselect pg_current_wal_lsn();\n\ncount: ${loadTestBefore?.count ?? '-'}\nwal_lsn: ${loadTestBefore?.wal_lsn ?? '-'}\ncaptured_at: ${loadTestBefore?.captured_at ?? '-'}`}</pre>
+            <pre className="kv-pre">{`After load test:\nselect count(*) from article_views;\nselect pg_current_wal_lsn();\n\ncount: ${loadTestAfter?.count ?? '-'}\nwal_lsn: ${loadTestAfter?.wal_lsn ?? '-'}\ncaptured_at: ${loadTestAfter?.captured_at ?? '-'}`}</pre>
+          </div>
+        </div>
+        {loadTestResult && (
+          <div style={{ marginTop: 12 }}>
+            <pre className="kv-pre">{`Target: ${loadTestResult.target}\nConcurrency: ${loadTestResult.concurrency}\nOps: ${loadTestResult.ops}\nDuration: ${loadTestResult.duration_sec}\nTPS: ${loadTestResult.tps}\nErrors: ${loadTestResult.errors}\nStarted: ${loadTestResult.started_at}\nEnded: ${loadTestResult.ended_at}`}</pre>
+            {loadTestResultId != null && (
+              <div style={{ marginTop: 6, color: '#6b6b6b' }}>Result id: {loadTestResultId}</div>
+            )}
+          </div>
+        )}
+        {!loadTestResult && (
+          <div style={{ marginTop: 10, color: '#6b6b6b' }}>
+            No load test results yet. Run a load test, then click Refresh Result.
+          </div>
+        )}
       </div>
 
       <div className="card">
@@ -260,37 +379,33 @@ export default function Admin({ role }) {
         {bulkPreviewCount !== null && (
           <div style={{ marginTop: 8 }}>Will update {bulkPreviewCount} rows</div>
         )}
+        {bulkMvccBefore && (
+          <div style={{ marginTop: 12 }}>
+            <h3 style={{ marginBottom: 6 }}>MVCC Sample (ctid/xmin/xmax)</h3>
+            <div style={{ marginBottom: 8, color: '#6b6b6b' }}>
+              SELECT article_id, ctid, xmin, xmax, status FROM articles WHERE category_id = {categoryId} ORDER BY
+              article_id LIMIT 5;
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <strong>Before</strong>
+            </div>
+            {renderMvccTable(bulkMvccBefore?.rows || [])}
+          </div>
+        )}
+        {bulkMvccAfter && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ marginBottom: 8 }}>
+              <strong>After</strong>
+            </div>
+            {renderMvccTable(bulkMvccAfter?.rows || [])}
+          </div>
+        )}
       </div>
 
       <div className="card">
         <h2>VACUUM</h2>
         <div>Table: articles</div>
         <button onClick={runVacuum}>VACUUM articles</button>
-      </div>
-
-      <div className="card">
-        <h2>Load Test</h2>
-        <label>Concurrency</label>
-        <input value={concurrency} onChange={(e) => setConcurrency(e.target.value)} />
-        <label>Ops</label>
-        <input value={ops} onChange={(e) => setOps(e.target.value)} />
-        <div className="button-row">
-          <button onClick={runLoadTest}>Run Load Test</button>
-          <button className="secondary" onClick={() => loadLatestLoadTest()}>Refresh Result</button>
-        </div>
-        {loadTestResult && (
-          <div style={{ marginTop: 12 }}>
-            <div className="two-col">
-              <pre className="kv-pre">{`Target: ${loadTestResult?.target ?? '-'}\nConcurrency: ${loadTestResult?.concurrency ?? '-'}\nOps: ${loadTestResult?.ops ?? '-'}\nDuration: ${loadTestResult?.duration_sec ?? '-'}\nTPS: ${loadTestResult?.tps ?? '-'}\nErrors: ${loadTestResult?.errors ?? '-'}`}</pre>
-              <pre className="kv-pre">{`Started: ${loadTestResult?.started_at ?? '-'}\nEnded: ${loadTestResult?.ended_at ?? '-'}`}</pre>
-            </div>
-          </div>
-        )}
-        {!loadTestResult && (
-          <div style={{ marginTop: 10, color: '#6b6b6b' }}>
-            No load test results yet. Run a load test, then click Refresh Result.
-          </div>
-        )}
       </div>
 
       {message && <div className="card">{message}</div>}
