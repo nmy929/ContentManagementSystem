@@ -496,32 +496,6 @@ export default function Admin({ role }) {
       </div>
 
       <div className="card">
-        <h3>Bulk Unpublish</h3>
-        <label>Category ID</label>
-        <input value={categoryId} onChange={(e) => setCategoryId(e.target.value)} />
-        <label>Older Than Days</label>
-        <input value={olderThan} onChange={(e) => setOlderThan(e.target.value)} />
-        <button onClick={runBulk}>Run Bulk</button>
-      </div>
-
-      <div className="card">
-        <h2>Index Control</h2>
-        <label>Index SQL</label>
-        <textarea rows="3" value={indexSql} onChange={(e) => setIndexSql(e.target.value)} />
-        <div>
-          <button onClick={runCreateIndex}>Create Index</button>
-          <button className="secondary" onClick={runDropIndex}>Drop Index (simple replace)</button>
-        </div>
-      </div>
-
-      <div className="card">
-        <h2>VACUUM</h2>
-        <label>Table</label>
-        <input value={vacuumTable} onChange={(e) => setVacuumTable(e.target.value)} />
-        <button onClick={runVacuum}>Run Vacuum</button>
-      </div>
-
-      <div className="card">
         <h3>Load Test</h3>
         <label>Concurrency</label>
         <input value={concurrency} onChange={(e) => setConcurrency(e.target.value)} disabled />
