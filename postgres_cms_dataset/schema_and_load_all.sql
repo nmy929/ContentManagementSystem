@@ -13,6 +13,7 @@ DROP TABLE IF EXISTS users;
 CREATE TABLE users (
   user_id BIGINT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
+  password TEXT NOT NULL DEFAULT '',
   email TEXT NOT NULL UNIQUE,
   role TEXT NOT NULL,
   created_at TIMESTAMP WITHOUT TIME ZONE
@@ -90,6 +91,7 @@ CREATE INDEX idx_articles_author ON articles (author_id);
 
 -- Loading CSV files (run in psql client where CSVs are accessible)
 \copy users(user_id, username, email, role, created_at) FROM 'users.csv' WITH (FORMAT csv, HEADER true);
+UPDATE users SET password = username WHERE password = '';
 \copy categories(category_id, name) FROM 'categories.csv' WITH (FORMAT csv, HEADER true);
 \copy tags(tag_id, name) FROM 'tags.csv' WITH (FORMAT csv, HEADER true);
 \copy articles(article_id, author_id, category_id, status, title, slug, published_at, views_count, created_at, updated_at, current_rev) FROM 'articles.csv' WITH (FORMAT csv, HEADER true);
@@ -104,5 +106,13 @@ SELECT setval('revisions_revision_id_seq', COALESCE((SELECT MAX(revision_id) FRO
 SELECT setval('comments_comment_id_seq', COALESCE((SELECT MAX(comment_id) FROM comments), 1));
 SELECT setval('article_views_view_id_seq', COALESCE((SELECT MAX(view_id) FROM article_views), 1));
 SELECT setval('admin_actions_action_id_seq', COALESCE((SELECT MAX(action_id) FROM admin_actions), 1));
+
+DROP MATERIALIZED VIEW IF EXISTS articles_tag_index;
+CREATE MATERIALIZED VIEW articles_tag_index AS
+SELECT at.article_id, ARRAY_AGG(at.tag_id ORDER BY at.tag_id) AS tag_ids
+FROM article_tags at
+GROUP BY at.article_id;
+
+CREATE INDEX IF NOT EXISTS idx_articles_tagids_gin ON articles_tag_index USING GIN(tag_ids);
 
 ANALYZE;

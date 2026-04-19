@@ -25,6 +25,7 @@ export default function App() {
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('role');
+    setToken(null);
     setAuthToken(null);
     setRole(null);
     navigate('/login');
@@ -33,6 +34,7 @@ export default function App() {
   const handleLogin = (newToken, newRole) => {
     localStorage.setItem('token', newToken);
     localStorage.setItem('role', newRole);
+    setToken(newToken);
     setAuthToken(newToken);
     setRole(newRole);
     navigate('/');

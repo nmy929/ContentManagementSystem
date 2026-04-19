@@ -1,0 +1,20 @@
+{
+  "action": "category_index_create",
+  "canonical_index_name": "idx_articles_category_published",
+  "canonical_index_sql": "CREATE INDEX idx_articles_category_published ON articles(category_id, published_at DESC) INCLUDE (title)",
+  "dropped_indexes": [
+    "idx_articles_category_published"
+  ],
+  "before_indexes": [
+    {
+      "indexname": "idx_articles_category_published",
+      "indexdef": "CREATE INDEX idx_articles_category_published ON public.articles USING btree (category_id, published_at DESC) INCLUDE (title)"
+    }
+  ],
+  "after_indexes": [
+    {
+      "indexname": "idx_articles_category_published",
+      "indexdef": "CREATE INDEX idx_articles_category_published ON public.articles USING btree (category_id, published_at DESC) INCLUDE (title)"
+    }
+  ]
+}

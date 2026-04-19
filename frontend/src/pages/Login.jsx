@@ -20,7 +20,7 @@ export default function Login({ onLogin }) {
   return (
     <div className="card">
       <h2>Login</h2>
-      <p>Use usernames from the dataset: author1, editor1, admin1.</p>
+      {/* <p>Use usernames from the dataset: author1, editor1, admin1.</p> */}
       <form onSubmit={submit}>
         <label>Username</label>
         <input value={username} onChange={(e) => setUsername(e.target.value)} />

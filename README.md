@@ -39,7 +39,7 @@ docker compose exec -T backend psql -h db -U d551user -d d551 -f /backend/init_e
 
 Use usernames from `postgres_cms_dataset/users.csv` (for example: `author1`, `editor1`, `admin1`).
 
-The demo login ignores the password and authenticates by username only.
+Password is the same as the username.
 
 ## Running the Full Demo Script
 
@@ -58,6 +58,7 @@ Output zip:
 - Author: create/edit articles, generate revisions, basic analytics
 - Editor: edit any article, review content
 - Admin: bulk operations, EXPLAIN runner, VACUUM, index control, load test, artifact downloads
+- All users: advanced tag filter (ANY/ALL, sorted, paginated)
 
 ## Admin Operations (UI)
 
@@ -67,10 +68,26 @@ Output zip:
 - VACUUM: `Admin -> VACUUM`
 - Load test: `Admin -> Load Test`
 - Metrics list: `Admin -> Experiment Results`
+- Tag filter GIN index control: `Feed -> Advanced Tag Filter -> GIN Index Control`
 
 Artifacts are stored in:
 
 - `postgres_cms_dataset/artifacts/`
+
+## Tag Filter (GIN Index Demonstration)
+
+Feed includes an Advanced Tag Filter that queries articles by tags using a materialized view with a GIN index:
+
+- Mode `ANY` uses overlap (`&&`)
+- Mode `ALL` uses containment (`@>`)
+
+Admin users can toggle the GIN index on/off from the Feed page to compare execution plans.
+
+If you update tags or article_tags, refresh the materialized view:
+
+```bash
+curl -X POST http://localhost:8000/api/admin/refresh_tags_index -H "Authorization: Bearer <admin_token>"
+```
 
 ## API Notes
 

@@ -28,6 +28,12 @@ DB_NAME = os.getenv("DB_NAME", "d551")
 ROLE_AUTHOR = "author"
 ROLE_EDITOR = "editor"
 ROLE_ADMIN = "admin"
+BTREE_BENCHMARK_INDEX_NAME = "idx_articles_category_published"
+BTREE_BENCHMARK_INDEX_SQL = (
+    "CREATE INDEX idx_articles_category_published "
+    "ON articles(category_id, published_at DESC) "
+    "INCLUDE (title)"
+)
 
 app = FastAPI(title="Postgres CMS")
 
@@ -91,6 +97,12 @@ class LoadTestRequest(BaseModel):
     target: str
     concurrency: int
     ops: int
+
+
+class GinBenchmarkRequest(BaseModel):
+    tag_ids: List[int]
+    mode: str = "all"
+    runs: int = 3
 
 
 async def get_pool() -> asyncpg.pool.Pool:
@@ -170,6 +182,95 @@ async def insert_experiment(
     )
     return row["id"]
 
+def parse_explain_summary(explain_text: str) -> Dict[str, Optional[str]]:
+    scan_type = None
+    index_used = None
+    buffers = None
+    total_time = None
+    for line in explain_text.splitlines():
+        if "Bitmap Index Scan" in line:
+            scan_type = "Bitmap Index Scan"
+        elif "Bitmap Heap Scan" in line and not scan_type:
+            scan_type = "Bitmap Heap Scan"
+        elif "Index Scan" in line and not scan_type:
+            scan_type = "Index Scan"
+        elif "Seq Scan" in line and not scan_type:
+            scan_type = "Seq Scan"
+        if "Index Scan using" in line:
+            idx_match = re.search(r"using ([A-Za-z0-9_]+)", line)
+            if idx_match:
+                index_used = idx_match.group(1)
+        if "Bitmap Index Scan on" in line:
+            idx_match = re.search(r"on ([A-Za-z0-9_]+)", line)
+            if idx_match:
+                index_used = idx_match.group(1)
+        if "Buffers:" in line and not buffers:
+            buffers = line.strip()
+        if line.strip().startswith("Execution Time"):
+            total_time = line.strip()
+    return {
+        "scan_type": scan_type,
+        "index_used": index_used,
+        "buffers": buffers,
+        "execution_time": total_time,
+    }
+
+
+def parse_benchmark_explain_summary(explain_text: str) -> Dict[str, Optional[str]]:
+    scan_types: List[str] = []
+    index_used = None
+    buffers = None
+    execution_time = None
+    rows_removed = None
+
+    for line in explain_text.splitlines():
+        stripped = line.strip()
+        if "Bitmap Index Scan" in stripped and "Bitmap Index Scan" not in scan_types:
+            scan_types.append("Bitmap Index Scan")
+        if "Bitmap Heap Scan" in stripped and "Bitmap Heap Scan" not in scan_types:
+            scan_types.append("Bitmap Heap Scan")
+        if "Index Only Scan" in stripped and "Index Only Scan" not in scan_types:
+            scan_types.append("Index Only Scan")
+        elif (
+            "Index Scan" in stripped
+            and "Bitmap Index Scan" not in stripped
+            and "Index Scan" not in scan_types
+        ):
+            scan_types.append("Index Scan")
+        if "Seq Scan" in stripped and "Seq Scan" not in scan_types:
+            scan_types.append("Seq Scan")
+
+        if "Bitmap Index Scan on" in stripped:
+            idx_match = re.search(r"on ([A-Za-z0-9_]+)", stripped)
+            if idx_match:
+                index_used = idx_match.group(1)
+        elif "Index Scan using" in stripped or "Index Only Scan using" in stripped:
+            idx_match = re.search(r"using ([A-Za-z0-9_]+)", stripped)
+            if idx_match:
+                index_used = idx_match.group(1)
+
+        if stripped.startswith("Buffers:") and not buffers:
+            buffers = stripped.replace("Buffers:", "", 1).strip()
+        if stripped.startswith("Execution Time"):
+            execution_time = stripped.replace("Execution Time:", "", 1).strip()
+        if stripped.startswith("Rows Removed by Filter"):
+            rows_removed = stripped.replace("Rows Removed by Filter:", "", 1).strip()
+
+    return {
+        "scan_type": " + ".join(scan_types) if scan_types else None,
+        "index_used": index_used or "N/A",
+        "buffers": buffers,
+        "execution_time": execution_time,
+        "rows_removed_by_filter": rows_removed,
+    }
+
+
+def extract_execution_time_ms(explain_text: str) -> Optional[float]:
+    match = re.search(r"Execution Time:\s*([0-9.]+)\s*ms", explain_text)
+    if not match:
+        return None
+    return float(match.group(1))
+
 
 def only_select_sql(sql: str) -> bool:
     return bool(re.match(r"^\s*(select|with)\b", sql, re.IGNORECASE))
@@ -188,6 +289,34 @@ async def run_explain(
     artifact = await write_artifact(explain_text, f"explain_{operation}")
     exp_id = await insert_experiment(conn, operation, op_params, explain_text, artifact)
     return {"id": exp_id, "artifact": artifact, "explain_text": explain_text}
+
+
+async def list_category_published_indexes(conn: asyncpg.Connection) -> List[Dict[str, str]]:
+    rows = await conn.fetch(
+        """
+        SELECT indexname, indexdef
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'articles'
+          AND (
+            indexdef ILIKE '%(category_id, published_at DESC)%'
+            OR indexdef ILIKE '%(category_id, published_at)%'
+            OR indexdef ILIKE '%(published_at DESC)%'
+          )
+        ORDER BY indexname
+        """
+    )
+    return [{"indexname": r["indexname"], "indexdef": r["indexdef"]} for r in rows]
+
+
+async def drop_category_published_indexes(conn: asyncpg.Connection) -> List[str]:
+    indexes = await list_category_published_indexes(conn)
+    dropped: List[str] = []
+    for idx in indexes:
+        index_name = idx["indexname"]
+        await conn.execute(f"DROP INDEX IF EXISTS {index_name}")
+        dropped.append(index_name)
+    return dropped
 
 
 async def capture_pg_stat(conn: asyncpg.Connection) -> str:
@@ -228,10 +357,10 @@ def run_vacuum_psql(table: str) -> str:
 async def login(payload: LoginRequest, pool: asyncpg.pool.Pool = Depends(get_pool)) -> LoginResponse:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT user_id, username, role FROM users WHERE username = $1",
+            "SELECT user_id, username, role, password FROM users WHERE username = $1",
             payload.username,
         )
-        if not row:
+        if not row or row["password"] != payload.password:
             raise HTTPException(status_code=401, detail="Invalid credentials")
         token = create_token(
             {
@@ -276,6 +405,70 @@ async def get_articles(
     response: Dict[str, Any] = {"rows": data, "explain_artifact": explain_info["artifact"]}
     if user["role"] == ROLE_ADMIN:
         response["explain_text"] = explain_info["explain_text"]
+    return response
+
+
+@app.get("/api/tags")
+async def list_tags(
+    user: Dict[str, Any] = Depends(require_roles(ROLE_AUTHOR, ROLE_EDITOR, ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT tag_id, name FROM tags ORDER BY tag_id")
+    return {"rows": [dict(r) for r in rows]}
+
+
+@app.get("/api/categories")
+async def list_categories(
+    user: Dict[str, Any] = Depends(require_roles(ROLE_AUTHOR, ROLE_EDITOR, ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT category_id, name FROM categories ORDER BY category_id")
+    return {"rows": [dict(r) for r in rows]}
+
+
+@app.get("/api/articles/by_tags")
+async def get_articles_by_tags(
+    tag_ids: str,
+    mode: str = Query("any", pattern="^(any|all)$"),
+    sort: str = Query("published_at", pattern="^(published_at|views_count)$"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: Dict[str, Any] = Depends(require_roles(ROLE_AUTHOR, ROLE_EDITOR, ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    ids = [int(t) for t in tag_ids.split(",") if t.strip().isdigit()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="tag_ids required")
+    op = "&&" if mode == "any" else "@>"
+    sort_col = "published_at" if sort == "published_at" else "views_count"
+    base_sql = (
+        "SELECT a.article_id, a.title, a.published_at, a.author_id, a.views_count, "
+        "ati.tag_ids, ARRAY_AGG(t.name ORDER BY t.name) AS tag_names "
+        "FROM articles a "
+        "JOIN articles_tag_index ati ON ati.article_id = a.article_id "
+        "LEFT JOIN article_tags at ON at.article_id = a.article_id "
+        "LEFT JOIN tags t ON t.tag_id = at.tag_id "
+        f"WHERE ati.tag_ids {op} $1::int[] "
+        "GROUP BY a.article_id, a.title, a.published_at, a.author_id, a.views_count, ati.tag_ids "
+        f"ORDER BY a.{sort_col} DESC "
+        "LIMIT $2 OFFSET $3"
+    )
+    params = [ids, limit, offset]
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(base_sql, *params)
+        explain_info = await run_explain(
+            conn,
+            base_sql,
+            params,
+            "tags_filter",
+            {"tag_ids": ids, "mode": mode, "sort": sort, "limit": limit, "offset": offset},
+        )
+    response: Dict[str, Any] = {"rows": [dict(r) for r in rows], "explain_artifact": explain_info["artifact"]}
+    if user["role"] == ROLE_ADMIN:
+        response["explain_text"] = explain_info["explain_text"]
+        response["explain_summary"] = parse_explain_summary(explain_info["explain_text"])
     return response
 
 
@@ -676,6 +869,213 @@ async def run_load_test(
 ) -> Dict[str, Any]:
     background_tasks.add_task(load_test_job, payload.target, payload.concurrency, payload.ops, pool)
     return {"status": "queued"}
+
+
+@app.post("/api/admin/tags_index/create")
+async def create_tags_gin_index(
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_articles_tagids_gin ON articles_tag_index USING GIN(tag_ids)"
+        )
+    return {"status": "ok"}
+
+
+@app.post("/api/admin/tags_index/drop")
+async def drop_tags_gin_index(
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        await conn.execute("DROP INDEX IF EXISTS idx_articles_tagids_gin")
+    return {"status": "ok"}
+
+
+@app.get("/api/admin/tags_index/status")
+async def tags_gin_index_status(
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        exists = await conn.fetchval(
+            """
+            SELECT EXISTS (
+              SELECT 1
+              FROM pg_indexes
+              WHERE schemaname = 'public'
+                AND indexname = 'idx_articles_tagids_gin'
+            )
+            """
+        )
+    return {"exists": bool(exists)}
+
+
+@app.post("/api/admin/refresh_tags_index")
+async def refresh_tags_index(
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        await conn.execute("REFRESH MATERIALIZED VIEW articles_tag_index")
+    return {"status": "ok"}
+
+
+@app.get("/api/admin/category_index/status")
+async def category_index_status(
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        indexes = await list_category_published_indexes(conn)
+    canonical_exists = any(i["indexname"] == BTREE_BENCHMARK_INDEX_NAME for i in indexes)
+    return {"canonical_exists": canonical_exists, "indexes": indexes}
+
+
+@app.post("/api/admin/category_index/create")
+async def create_category_index(
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        before = await list_category_published_indexes(conn)
+        dropped_indexes = await drop_category_published_indexes(conn)
+        await conn.execute(BTREE_BENCHMARK_INDEX_SQL)
+        after = await list_category_published_indexes(conn)
+        artifact = await write_artifact(
+            json.dumps(
+                {
+                    "action": "category_index_create",
+                    "canonical_index_name": BTREE_BENCHMARK_INDEX_NAME,
+                    "canonical_index_sql": BTREE_BENCHMARK_INDEX_SQL,
+                    "dropped_indexes": dropped_indexes,
+                    "before_indexes": before,
+                    "after_indexes": after,
+                },
+                indent=2,
+            ),
+            "category_index_create",
+            "json",
+        )
+        exp_id = await insert_experiment(
+            conn,
+            "category_index_create",
+            {"dropped_indexes": dropped_indexes, "canonical_index_name": BTREE_BENCHMARK_INDEX_NAME},
+            None,
+            artifact,
+        )
+    return {"status": "ok", "artifact": artifact, "experiment_id": exp_id}
+
+
+@app.post("/api/admin/category_index/drop")
+async def drop_category_index(
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    async with pool.acquire() as conn:
+        before = await list_category_published_indexes(conn)
+        dropped_indexes = await drop_category_published_indexes(conn)
+        after = await list_category_published_indexes(conn)
+        artifact = await write_artifact(
+            json.dumps(
+                {
+                    "action": "category_index_drop",
+                    "dropped_indexes": dropped_indexes,
+                    "before_indexes": before,
+                    "after_indexes": after,
+                },
+                indent=2,
+            ),
+            "category_index_drop",
+            "json",
+        )
+        exp_id = await insert_experiment(
+            conn,
+            "category_index_drop",
+            {"dropped_indexes": dropped_indexes},
+            None,
+            artifact,
+        )
+    return {"status": "ok", "artifact": artifact, "experiment_id": exp_id, "dropped_indexes": dropped_indexes}
+
+
+@app.post("/api/admin/gin_benchmark")
+async def run_gin_benchmark(
+    payload: GinBenchmarkRequest,
+    user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
+    pool: asyncpg.pool.Pool = Depends(get_pool),
+) -> Dict[str, Any]:
+    ids = [int(v) for v in payload.tag_ids if int(v) > 0]
+    if not ids:
+        raise HTTPException(status_code=400, detail="tag_ids required")
+    mode = payload.mode.lower()
+    if mode not in ("any", "all"):
+        raise HTTPException(status_code=400, detail="mode must be any or all")
+    runs = max(1, min(payload.runs, 5))
+    operator = "&&" if mode == "any" else "@>"
+
+    base_sql = f"SELECT article_id FROM articles_tag_index WHERE tag_ids {operator} $1::int[]"
+
+    async with pool.acquire() as conn:
+        explain_texts: List[str] = []
+        exec_times: List[float] = []
+
+        for _ in range(runs):
+            rows = await conn.fetch(
+                f"EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) {base_sql}",
+                ids,
+            )
+            explain_text = "\n".join([r[0] for r in rows])
+            explain_texts.append(explain_text)
+            exec_time = extract_execution_time_ms(explain_text)
+            if exec_time is not None:
+                exec_times.append(exec_time)
+
+        matched_rows = await conn.fetch(base_sql, ids)
+        matched_count = len(matched_rows)
+        sample_article_ids = [r["article_id"] for r in matched_rows[:20]]
+
+        median_time = None
+        if exec_times:
+            sorted_times = sorted(exec_times)
+            median_time = sorted_times[len(sorted_times) // 2]
+
+        chosen_explain = explain_texts[-1]
+        summary = parse_benchmark_explain_summary(chosen_explain)
+        artifact_text = "\n\n".join(
+            [f"-- run {i + 1} --\n{text}" for i, text in enumerate(explain_texts)]
+        )
+        artifact = await write_artifact(artifact_text, "gin_benchmark")
+        exp_id = await insert_experiment(
+            conn,
+            "gin_benchmark",
+            {
+                "tag_ids": ids,
+                "mode": mode,
+                "operator": operator,
+                "runs": runs,
+                "matched_count": matched_count,
+                "median_execution_time_ms": median_time,
+            },
+            chosen_explain,
+            artifact,
+        )
+
+    return {
+        "status": "ok",
+        "query_sql": base_sql.replace("$1::int[]", "'" + "{" + ",".join(map(str, ids)) + "}'"),
+        "operator": operator,
+        "runs": runs,
+        "execution_times_ms": exec_times,
+        "median_execution_time_ms": median_time,
+        "matched_count": matched_count,
+        "sample_article_ids": sample_article_ids,
+        "explain_summary": summary,
+        "explain_text": chosen_explain,
+        "artifact": artifact,
+        "experiment_id": exp_id,
+    }
 
 
 @app.get("/api/metrics/latest")
