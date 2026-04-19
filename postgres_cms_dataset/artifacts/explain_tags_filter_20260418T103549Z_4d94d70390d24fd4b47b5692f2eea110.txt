@@ -1,0 +1,40 @@
+Limit  (cost=1098.75..1098.76 rows=3 width=132) (actual time=5.424..5.426 rows=2 loops=1)
+  Buffers: shared hit=472
+  ->  Sort  (cost=1098.75..1098.76 rows=3 width=132) (actual time=5.423..5.424 rows=2 loops=1)
+        Sort Key: a.published_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=472
+        ->  GroupAggregate  (cost=1098.66..1098.73 rows=3 width=132) (actual time=5.417..5.421 rows=2 loops=1)
+              Group Key: a.article_id, ati.tag_ids
+              Buffers: shared hit=472
+              ->  Sort  (cost=1098.66..1098.67 rows=3 width=106) (actual time=5.406..5.408 rows=9 loops=1)
+                    Sort Key: a.article_id, ati.tag_ids
+                    Sort Method: quicksort  Memory: 26kB
+                    Buffers: shared hit=472
+                    ->  Nested Loop Left Join  (cost=0.71..1098.63 rows=3 width=106) (actual time=0.264..5.401 rows=9 loops=1)
+                          Join Filter: (t.tag_id = at.tag_id)
+                          Rows Removed by Join Filter: 109
+                          Buffers: shared hit=472
+                          ->  Nested Loop Left Join  (cost=0.71..1091.88 rows=3 width=104) (actual time=0.258..5.373 rows=9 loops=1)
+                                Buffers: shared hit=471
+                                ->  Nested Loop  (cost=0.29..1091.31 rows=1 width=100) (actual time=0.253..5.363 rows=2 loops=1)
+                                      Buffers: shared hit=464
+                                      ->  Seq Scan on articles_tag_index ati  (cost=0.00..1083.00 rows=1 width=41) (actual time=0.247..5.352 rows=2 loops=1)
+                                            Filter: (tag_ids @> '{1,2,3}'::integer[])
+                                            Rows Removed by Filter: 49998
+                                            Buffers: shared hit=458
+                                      ->  Index Scan using articles_pkey on articles a  (cost=0.29..8.31 rows=1 width=67) (actual time=0.003..0.004 rows=1 loops=2)
+                                            Index Cond: (article_id = ati.article_id)
+                                            Buffers: shared hit=6
+                                ->  Index Only Scan using article_tags_pkey on article_tags at  (cost=0.42..0.54 rows=4 width=12) (actual time=0.003..0.004 rows=4 loops=2)
+                                      Index Cond: (article_id = a.article_id)
+                                      Heap Fetches: 0
+                                      Buffers: shared hit=7
+                          ->  Materialize  (cost=0.00..2.50 rows=100 width=10) (actual time=0.001..0.002 rows=13 loops=9)
+                                Buffers: shared hit=1
+                                ->  Seq Scan on tags t  (cost=0.00..2.00 rows=100 width=10) (actual time=0.003..0.006 rows=45 loops=1)
+                                      Buffers: shared hit=1
+Planning:
+  Buffers: shared hit=29
+Planning Time: 0.292 ms
+Execution Time: 5.453 ms

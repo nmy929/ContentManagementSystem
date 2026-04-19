@@ -1,0 +1,25 @@
+-- run 1 --
+Seq Scan on articles_tag_index  (cost=0.00..1083.00 rows=1 width=8) (actual time=13.387..15.351 rows=1 loops=1)
+  Filter: (tag_ids @> '{98,99,100}'::integer[])
+  Rows Removed by Filter: 49999
+  Buffers: shared hit=458
+Planning:
+  Buffers: shared hit=5 dirtied=1
+Planning Time: 0.199 ms
+Execution Time: 15.374 ms
+
+-- run 2 --
+Seq Scan on articles_tag_index  (cost=0.00..1083.00 rows=1 width=8) (actual time=6.289..7.214 rows=1 loops=1)
+  Filter: (tag_ids @> '{98,99,100}'::integer[])
+  Rows Removed by Filter: 49999
+  Buffers: shared hit=458
+Planning Time: 0.050 ms
+Execution Time: 7.223 ms
+
+-- run 3 --
+Seq Scan on articles_tag_index  (cost=0.00..1083.00 rows=1 width=8) (actual time=4.696..5.418 rows=1 loops=1)
+  Filter: (tag_ids @> '{98,99,100}'::integer[])
+  Rows Removed by Filter: 49999
+  Buffers: shared hit=458
+Planning Time: 0.017 ms
+Execution Time: 5.422 ms

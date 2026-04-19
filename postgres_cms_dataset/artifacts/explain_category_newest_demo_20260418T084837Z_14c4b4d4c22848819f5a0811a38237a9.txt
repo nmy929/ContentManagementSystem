@@ -1,0 +1,17 @@
+Sort  (cost=1289.46..1298.32 rows=3547 width=43) (actual time=6.346..6.800 rows=3473 loops=1)
+  Sort Key: published_at DESC
+  Sort Method: quicksort  Memory: 393kB
+  Buffers: shared hit=924 read=8
+  ->  Bitmap Heap Scan on articles  (cost=79.22..1080.32 rows=3547 width=43) (actual time=3.092..5.648 rows=3473 loops=1)
+        Recheck Cond: (category_id = 1)
+        Filter: (status = 'published'::text)
+        Rows Removed by Filter: 1507
+        Heap Blocks: exact=923
+        Buffers: shared hit=924 read=8
+        ->  Bitmap Index Scan on idx_articles_category_published  (cost=0.00..78.34 rows=5073 width=0) (actual time=2.964..2.964 rows=4981 loops=1)
+              Index Cond: (category_id = 1)
+              Buffers: shared hit=1 read=8
+Planning:
+  Buffers: shared hit=52 read=1
+Planning Time: 0.587 ms
+Execution Time: 7.018 ms

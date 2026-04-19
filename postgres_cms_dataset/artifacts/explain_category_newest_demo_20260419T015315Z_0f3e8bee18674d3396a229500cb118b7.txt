@@ -1,0 +1,10 @@
+Limit  (cost=0.41..11.64 rows=200 width=43) (actual time=2.077..2.147 rows=200 loops=1)
+  Buffers: shared hit=1 read=5
+  ->  Index Only Scan using idx_articles_category_published on articles  (cost=0.41..285.17 rows=5073 width=43) (actual time=2.076..2.131 rows=200 loops=1)
+        Index Cond: (category_id = 1)
+        Heap Fetches: 4
+        Buffers: shared hit=1 read=5
+Planning:
+  Buffers: shared hit=104
+Planning Time: 0.209 ms
+Execution Time: 2.166 ms

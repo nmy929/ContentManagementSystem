@@ -1,0 +1,43 @@
+Limit  (cost=6818.36..6818.41 rows=20 width=132) (actual time=25.553..25.556 rows=20 loops=1)
+  Buffers: shared hit=14399
+  ->  Sort  (cost=6818.36..6850.63 rows=12908 width=132) (actual time=25.552..25.554 rows=20 loops=1)
+        Sort Key: a.published_at DESC
+        Sort Method: top-N heapsort  Memory: 33kB
+        Buffers: shared hit=14399
+        ->  GroupAggregate  (cost=6184.45..6474.88 rows=12908 width=132) (actual time=19.608..25.109 rows=4338 loops=1)
+              Group Key: a.article_id, ati.tag_ids
+              Buffers: shared hit=14399
+              ->  Sort  (cost=6184.45..6216.72 rows=12908 width=106) (actual time=19.603..20.035 rows=15903 loops=1)
+                    Sort Key: a.article_id, ati.tag_ids
+                    Sort Method: quicksort  Memory: 2774kB
+                    Buffers: shared hit=14399
+                    ->  Hash Left Join  (cost=1140.28..5303.09 rows=12908 width=106) (actual time=5.419..17.374 rows=15903 loops=1)
+                          Hash Cond: (at.tag_id = t.tag_id)
+                          Buffers: shared hit=14399
+                          ->  Nested Loop Left Join  (cost=1137.03..5264.53 rows=12908 width=104) (actual time=5.403..15.786 rows=15903 loops=1)
+                                Buffers: shared hit=14398
+                                ->  Hash Join  (cost=1136.61..2792.00 rows=4289 width=100) (actual time=5.400..11.106 rows=4338 loops=1)
+                                      Hash Cond: (a.article_id = ati.article_id)
+                                      Buffers: shared hit=1383
+                                      ->  Seq Scan on articles a  (cost=0.00..1425.00 rows=50000 width=67) (actual time=0.002..2.110 rows=50000 loops=1)
+                                            Buffers: shared hit=925
+                                      ->  Hash  (cost=1083.00..1083.00 rows=4289 width=41) (actual time=5.393..5.394 rows=4338 loops=1)
+                                            Buckets: 8192  Batches: 1  Memory Usage: 408kB
+                                            Buffers: shared hit=458
+                                            ->  Seq Scan on articles_tag_index ati  (cost=0.00..1083.00 rows=4289 width=41) (actual time=0.004..5.011 rows=4338 loops=1)
+                                                  Filter: (tag_ids && '{26,27,28}'::integer[])
+                                                  Rows Removed by Filter: 45662
+                                                  Buffers: shared hit=458
+                                ->  Index Only Scan using article_tags_pkey on article_tags at  (cost=0.42..0.54 rows=4 width=12) (actual time=0.001..0.001 rows=4 loops=4338)
+                                      Index Cond: (article_id = a.article_id)
+                                      Heap Fetches: 0
+                                      Buffers: shared hit=13015
+                          ->  Hash  (cost=2.00..2.00 rows=100 width=10) (actual time=0.014..0.014 rows=100 loops=1)
+                                Buckets: 1024  Batches: 1  Memory Usage: 13kB
+                                Buffers: shared hit=1
+                                ->  Seq Scan on tags t  (cost=0.00..2.00 rows=100 width=10) (actual time=0.002..0.007 rows=100 loops=1)
+                                      Buffers: shared hit=1
+Planning:
+  Buffers: shared hit=27
+Planning Time: 0.249 ms
+Execution Time: 25.632 ms

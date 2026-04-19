@@ -1,0 +1,13 @@
+{
+  "action": "category_index_drop",
+  "dropped_indexes": [
+    "idx_articles_category_published"
+  ],
+  "before_indexes": [
+    {
+      "indexname": "idx_articles_category_published",
+      "indexdef": "CREATE INDEX idx_articles_category_published ON public.articles USING btree (category_id, published_at DESC) INCLUDE (title)"
+    }
+  ],
+  "after_indexes": []
+}

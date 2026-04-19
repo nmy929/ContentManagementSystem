@@ -25,6 +25,7 @@ export default function App() {
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('role');
+    setToken(null);
     setAuthToken(null);
     setRole(null);
     navigate('/login');

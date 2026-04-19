@@ -1,0 +1,48 @@
+Limit  (cost=7573.16..7573.21 rows=20 width=132) (actual time=33.147..33.150 rows=20 loops=1)
+  Buffers: shared hit=2207
+  ->  Sort  (cost=7573.16..7615.89 rows=17091 width=132) (actual time=33.147..33.149 rows=20 loops=1)
+        Sort Key: a.published_at DESC
+        Sort Method: top-N heapsort  Memory: 32kB
+        Buffers: shared hit=2207
+        ->  GroupAggregate  (cost=6733.83..7118.38 rows=17091 width=132) (actual time=25.730..32.657 rows=5672 loops=1)
+              Group Key: a.article_id, ati.tag_ids
+              Buffers: shared hit=2207
+              ->  Sort  (cost=6733.83..6776.56 rows=17091 width=106) (actual time=25.724..26.209 rows=20781 loops=1)
+                    Sort Key: a.article_id, ati.tag_ids
+                    Sort Method: quicksort  Memory: 3675kB
+                    Buffers: shared hit=2207
+                    ->  Hash Left Join  (cost=2431.53..5532.25 rows=17091 width=106) (actual time=7.553..22.746 rows=20781 loops=1)
+                          Hash Cond: (at.tag_id = t.tag_id)
+                          Buffers: shared hit=2207
+                          ->  Hash Right Join  (cost=2428.28..5482.23 rows=17091 width=104) (actual time=7.538..20.977 rows=20781 loops=1)
+                                Hash Cond: (at.article_id = a.article_id)
+                                Buffers: shared hit=2206
+                                ->  Seq Scan on article_tags at  (cost=0.00..2318.76 rows=150476 width=12) (actual time=0.001..5.181 rows=150476 loops=1)
+                                      Buffers: shared hit=814
+                                ->  Hash  (cost=2357.29..2357.29 rows=5679 width=100) (actual time=7.534..7.535 rows=5672 loops=1)
+                                      Buckets: 8192  Batches: 1  Memory Usage: 820kB
+                                      Buffers: shared hit=1392
+                                      ->  Hash Join  (cost=687.99..2357.29 rows=5679 width=100) (actual time=1.416..7.005 rows=5672 loops=1)
+                                            Hash Cond: (a.article_id = ati.article_id)
+                                            Buffers: shared hit=1392
+                                            ->  Seq Scan on articles a  (cost=0.00..1425.01 rows=50001 width=67) (actual time=0.001..1.923 rows=50001 loops=1)
+                                                  Buffers: shared hit=925
+                                            ->  Hash  (cost=617.00..617.00 rows=5679 width=41) (actual time=1.412..1.413 rows=5672 loops=1)
+                                                  Buckets: 8192  Batches: 1  Memory Usage: 514kB
+                                                  Buffers: shared hit=467
+                                                  ->  Bitmap Heap Scan on articles_tag_index ati  (cost=88.01..617.00 rows=5679 width=41) (actual time=0.336..1.017 rows=5672 loops=1)
+                                                        Recheck Cond: (tag_ids && '{2,4,5,6}'::integer[])
+                                                        Heap Blocks: exact=458
+                                                        Buffers: shared hit=467
+                                                        ->  Bitmap Index Scan on idx_articles_tagids_gin  (cost=0.00..86.59 rows=5679 width=0) (actual time=0.301..0.301 rows=5672 loops=1)
+                                                              Index Cond: (tag_ids && '{2,4,5,6}'::integer[])
+                                                              Buffers: shared hit=9
+                          ->  Hash  (cost=2.00..2.00 rows=100 width=10) (actual time=0.012..0.012 rows=100 loops=1)
+                                Buckets: 1024  Batches: 1  Memory Usage: 13kB
+                                Buffers: shared hit=1
+                                ->  Seq Scan on tags t  (cost=0.00..2.00 rows=100 width=10) (actual time=0.002..0.006 rows=100 loops=1)
+                                      Buffers: shared hit=1
+Planning:
+  Buffers: shared hit=30
+Planning Time: 0.212 ms
+Execution Time: 33.228 ms
