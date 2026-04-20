@@ -116,7 +116,7 @@ button.secondary {
 .button-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
 }
 
@@ -132,9 +132,22 @@ button.secondary {
   gap: 16px;
 }
 
+.two-col-flex {
+  display: flex;
+  gap: 16px;
+}
+
+.two-col-flex > * {
+  flex: 1;
+}
+
 @media (max-width: 720px) {
   .two-col {
     grid-template-columns: 1fr;
+  }
+
+  .two-col-flex {
+    flex-direction: column;
   }
 }
 

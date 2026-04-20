@@ -1,0 +1,20 @@
+Limit  (cost=0.29..182.73 rows=20 width=59) (actual time=5.197..6.123 rows=20 loops=1)
+  Buffers: shared hit=2025
+  ->  Nested Loop  (cost=0.29..5327.53 rows=584 width=59) (actual time=5.196..6.119 rows=20 loops=1)
+        Join Filter: (articles.author_id = users.user_id)
+        Rows Removed by Join Filter: 1065
+        Buffers: shared hit=2025
+        ->  Index Scan using idx_articles_published_at on articles  (cost=0.29..4799.15 rows=35042 width=59) (actual time=5.010..5.682 rows=1085 loops=1)
+              Filter: (status = 'published'::text)
+              Rows Removed by Filter: 15043
+              Buffers: shared hit=2023
+        ->  Materialize  (cost=0.00..2.75 rows=1 width=8) (actual time=0.000..0.000 rows=1 loops=1085)
+              Buffers: shared hit=2
+              ->  Seq Scan on users  (cost=0.00..2.75 rows=1 width=8) (actual time=0.022..0.052 rows=1 loops=1)
+                    Filter: (username ~~* '%user006%'::text)
+                    Rows Removed by Filter: 59
+                    Buffers: shared hit=2
+Planning:
+  Buffers: shared hit=4
+Planning Time: 0.319 ms
+Execution Time: 6.153 ms

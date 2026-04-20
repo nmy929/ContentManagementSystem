@@ -1,0 +1,8 @@
+Limit  (cost=0.01..0.02 rows=1 width=56) (actual time=0.036..0.036 rows=0 loops=1)
+  ->  Sort  (cost=0.01..0.02 rows=1 width=56) (actual time=0.035..0.035 rows=0 loops=1)
+        Sort Key: published_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        ->  Seq Scan on articles  (cost=0.00..0.00 rows=1 width=56) (actual time=0.029..0.029 rows=0 loops=1)
+              Filter: (status = 'published'::text)
+Planning Time: 0.045 ms
+Execution Time: 0.054 ms

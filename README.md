@@ -23,12 +23,14 @@ This project is a full-stack CMS designed to capture PostgreSQL internal behavio
 ./scripts/start.sh
 ```
 
-2. Load schema and data (only once):
+2. Load schema and data:
 
 ```bash
-docker compose exec -T db psql -U d551user -d d551 -f /data/schema_and_load_all.sql
+docker compose exec -T db bash -lc "cd /data && psql -U d551user -d d551 -f schema_and_load_all.sql"
 docker compose exec -T backend psql -h db -U d551user -d d551 -f /backend/init_experiment_table.sql
 ```
+
+If the feed shows `Results: 0`, reload the dataset with the same command above and then refresh the page.
 
 3. Open the UI:
 
@@ -43,7 +45,7 @@ Password is the same as the username.
 
 ## Running the Full Demo Script
 
-This script loads data (if needed), runs feed explain, performs edits, bulk status change, load test, and bundles artifacts into a zip.
+This script waits for the services, reloads data when `articles` is empty, runs feed explain, performs edits, bulk status change, load test, and bundles artifacts into a zip.
 
 ```bash
 ./scripts/run_full_demo.sh
@@ -55,21 +57,29 @@ Output zip:
 
 ## Key Features by Role
 
-- Author: create/edit articles, generate revisions, basic analytics
-- Editor: edit any article, review content
+- Author: create articles, view all articles, edit own articles, basic analytics
+- Editor: all author capabilities plus edit any article, flag comments, delete comments
 - Admin: bulk operations, EXPLAIN runner, VACUUM, index control, load test, artifact downloads
 - All users: advanced tag filter (ANY/ALL, sorted, paginated)
+- Comment visibility: flagged comments are hidden from authors and remain visible to editors/admins
 
 ## Admin Operations (UI)
 
-- Run EXPLAIN: `Admin -> EXPLAIN Runner`
-- Autovacuum toggle: `Admin -> Autovacuum`
-- Bulk status change: `Admin -> Bulk Status Change` (Preview/Apply, source -> target)
-- Drop/Create index: `Admin -> Index Control`
-- VACUUM: `Admin -> VACUUM`
-- Load test: `Admin -> Load Test`
+- Index modules:
+  - `B-tree Benchmark Module (Category + Newest)`
+  - `GIN Benchmark Module (Tag Array Filtering)`
+- Storage modules:
+  - `Load Test Module`
+  - `Storage Maintenance Module`
+- Run EXPLAIN: `Admin -> Index Modules -> B-tree EXPLAIN Runner`
+- Drop/Create B-tree index: `Admin -> Index Modules -> B-tree Index Control`
+- GIN query benchmark: `Admin -> Index Modules -> GIN Benchmark Query`
+- GIN index control: `Admin -> Index Modules -> GIN Index Control`
+- Load test: `Admin -> Storage Modules -> Load Test` (configurable `concurrency` and `ops`)
+- Autovacuum toggle: `Admin -> Storage Modules -> Autovacuum`
+- VACUUM: `Admin -> Storage Modules -> VACUUM`
+- Bulk status change: `Admin -> Storage Modules -> Bulk Status Change` (Preview/Apply, source -> target)
 - Metrics list: `Admin -> Experiment Results`
-- Tag filter GIN index control: `Feed -> Advanced Tag Filter -> GIN Index Control`
 
 Artifacts are stored in:
 
@@ -96,7 +106,7 @@ curl -X POST http://localhost:8000/api/admin/refresh_tags_index -H "Authorizatio
 - Every feed/search query runs EXPLAIN and writes an artifact
 - Admin-only endpoints are protected by role-based checks
 
-## Deployment and Reproduction Steps (Detailed)
+## Rebuild and Reproduce
 
 1. Verify dataset folder exists:
 
@@ -117,15 +127,17 @@ docker compose exec -T db bash -lc "cd /data && psql -U d551user -d d551 -f sche
 docker compose exec -T backend psql -h db -U d551user -d d551 -f /backend/init_experiment_table.sql
 ```
 
+The schema/load script rebuilds the dataset from a clean state. It drops dependent objects with `CASCADE`, recreates the tables, and reloads the CSV data.
+
 4. Open the web UI:
 
 ```text
 http://localhost:5173
 ```
 
-5. Login as admin (from users.csv) and run:
+5. Login as admin (from `users.csv`) and run:
 
-- Feed -> "Refresh Feed" to collect EXPLAIN
+- Feed -> optional Category ID / Author ID / Author Username filters, then "Refresh Feed" to collect EXPLAIN
 - Admin -> EXPLAIN Runner for custom SQL
 - Admin -> Bulk Status Change (Preview/Apply), then (optional) VACUUM
 
@@ -156,3 +168,5 @@ Frontend service uses:
 - EXPLAIN is restricted to SELECT statements only.
 - VACUUM output is captured via `psql` in the backend container.
 - Artifacts are written as text/JSON/CSV and indexed in `experiment_results`.
+- `articles.current_revision_id` is maintained by application logic during create/edit flows; it is intentionally not enforced by a database foreign key.
+- If you reload the dataset, rerun `schema_and_load_all.sql` instead of manually dropping tables.

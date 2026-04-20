@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import api from '../api';
 import formatDateTime from '../utils/formatDateTime';
 
-export default function Article({ role }) {
+export default function Article({ role, userId }) {
   const { id } = useParams();
   const [article, setArticle] = useState(null);
   const [comments, setComments] = useState([]);
@@ -14,6 +14,9 @@ export default function Article({ role }) {
 
   const canComment = role === 'author' || role === 'editor' || role === 'admin';
   const canModerateComments = role === 'editor' || role === 'admin';
+  const canEditArticle = role === 'editor'
+    || role === 'admin'
+    || (role === 'author' && article && String(article.author_id) === String(userId));
 
   const loadComments = async () => {
     const res = await api.get(`/api/articles/${id}/comments`);
@@ -27,12 +30,25 @@ export default function Article({ role }) {
 
   useEffect(() => {
     const load = async () => {
+      setError(null);
+      try {
+        await loadArticle();
+      } catch (err) {
+        setError(err.response?.data?.detail || 'Failed to load article.');
+        return;
+      }
+
       try {
         await api.post(`/api/articles/${id}/view`);
         await loadArticle();
+      } catch (err) {
+        // Ignore view-tracking failures so the article can still render.
+      }
+
+      try {
         await loadComments();
       } catch (err) {
-        setError('Failed to load article.');
+        setCommentMessage(err.response?.data?.detail || 'Failed to load comments.');
       }
     };
     load();
@@ -106,9 +122,9 @@ export default function Article({ role }) {
       </div>
       <h2>{article.title}</h2>
       <p>Status: {article.status}</p>
-      <p>Views: {article.views_count}</p>
+      <p>Views: {article.view_count}</p>
       <p>{article.content}</p>
-      {(role === 'author' || role === 'editor' || role === 'admin') && (
+      {canEditArticle && (
         <Link to={`/editor/${article.article_id}`} className="button-link">
           Edit this article
         </Link>

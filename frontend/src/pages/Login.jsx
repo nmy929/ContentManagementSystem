@@ -11,7 +11,7 @@ export default function Login({ onLogin }) {
     setError(null);
     try {
       const res = await api.post('/api/auth/login', { username, password });
-      onLogin(res.data.token, res.data.role);
+      onLogin(res.data.token, res.data.role, res.data.user_id);
     } catch (err) {
       setError('Login failed.');
     }

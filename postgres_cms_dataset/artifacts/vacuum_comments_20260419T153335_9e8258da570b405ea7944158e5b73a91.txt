@@ -1,0 +1,24 @@
+VACUUM
+INFO:  vacuuming "d551.public.comments"
+INFO:  finished vacuuming "d551.public.comments": index scans: 0
+pages: 0 removed, 376 remain, 2 scanned (0.53% of total)
+tuples: 0 removed, 15001 remain, 0 are dead but not yet removable
+removable cutoff: 1252, which was 0 XIDs old when operation ended
+index scan bypassed: 2 pages from table (0.53% of total) have 2 dead item identifiers
+avg read rate: 0.000 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 44 hits, 0 misses, 0 dirtied
+WAL usage: 0 records, 0 full page images, 0 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  vacuuming "d551.pg_toast.pg_toast_16927"
+INFO:  finished vacuuming "d551.pg_toast.pg_toast_16927": index scans: 0
+pages: 0 removed, 0 remain, 0 scanned (100.00% of total)
+tuples: 0 removed, 0 remain, 0 are dead but not yet removable
+removable cutoff: 1252, which was 0 XIDs old when operation ended
+new relfrozenxid: 1252, which is 2 XIDs ahead of previous value
+index scan not needed: 0 pages from table (100.00% of total) had 0 dead item identifiers removed
+avg read rate: 0.000 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 33 hits, 0 misses, 0 dirtied
+WAL usage: 1 records, 0 full page images, 188 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  analyzing "public.comments"
+INFO:  "comments": scanned 376 of 376 pages, containing 15001 live rows and 2 dead rows; 15001 rows in sample, 15001 estimated total rows

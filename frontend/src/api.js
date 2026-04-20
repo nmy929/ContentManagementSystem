@@ -12,4 +12,8 @@ export function setToken(token) {
   }
 }
 
+if (typeof window !== 'undefined') {
+  setToken(window.localStorage.getItem('token'));
+}
+
 export default api;

@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api';
 import formatDateTime from '../utils/formatDateTime';
 import TagMultiSelect from '../components/TagMultiSelect';
+
+const ADMIN_UI_STATE_KEY = 'admin_ui_state';
 
 function buildDemoSql(categoryId) {
   return [
@@ -27,43 +29,71 @@ function getPresetTagIds(tagRows, preset) {
   return ids.slice(Math.max(0, ids.length - 3));
 }
 
+const STORAGE_TABLE_OPTIONS = [
+  'articles',
+  'revisions',
+  'comments',
+  'article_view',
+  'article_tags',
+  'tags',
+  'categories',
+  'users',
+  'experiment_results',
+  'admin_actions'
+];
+
+function loadAdminUiState() {
+  if (typeof window === 'undefined') return {};
+  try {
+    return JSON.parse(window.localStorage.getItem(ADMIN_UI_STATE_KEY) || '{}');
+  } catch (e) {
+    return {};
+  }
+}
+
 export default function Admin({ role }) {
+  const persistedState = loadAdminUiState();
+  const hasInitializedStorageStatus = useRef(false);
   const [metrics, setMetrics] = useState([]);
-  const [sql, setSql] = useState('');
-  const [label, setLabel] = useState('category_newest_demo');
-  const [explain, setExplain] = useState('');
-  const [categoryId, setCategoryId] = useState('1');
-  const [bulkSourceStatus, setBulkSourceStatus] = useState('published');
-  const [bulkTargetStatus, setBulkTargetStatus] = useState('archived');
-  const [bulkPreviewCount, setBulkPreviewCount] = useState(null);
-  const [bulkMvccBefore, setBulkMvccBefore] = useState(null);
-  const [bulkMvccAfter, setBulkMvccAfter] = useState(null);
-  const [categoryIndexStatus, setCategoryIndexStatus] = useState('Unknown');
-  const [categoryIndexList, setCategoryIndexList] = useState([]);
-  const [autovacuumEnabled, setAutovacuumEnabled] = useState(true);
-  const [autovacuumStatus, setAutovacuumStatus] = useState(null);
-  const [concurrency, setConcurrency] = useState('100');
-  const [ops, setOps] = useState('1000');
-  const [loadTestResult, setLoadTestResult] = useState(null);
-  const [loadTestResultId, setLoadTestResultId] = useState(null);
-  const [loadTestBefore, setLoadTestBefore] = useState(null);
-  const [loadTestAfter, setLoadTestAfter] = useState(null);
+  const [sql, setSql] = useState(persistedState.sql || '');
+  const [label, setLabel] = useState(persistedState.label || 'category_newest_demo');
+  const [explain, setExplain] = useState(persistedState.explain || '');
+  const [categoryId, setCategoryId] = useState(persistedState.categoryId || '1');
+  const [bulkSourceStatus, setBulkSourceStatus] = useState(persistedState.bulkSourceStatus || 'published');
+  const [bulkTargetStatus, setBulkTargetStatus] = useState(persistedState.bulkTargetStatus || 'archived');
+  const [bulkBeforeDate, setBulkBeforeDate] = useState(persistedState.bulkBeforeDate || '');
+  const [bulkPreviewCount, setBulkPreviewCount] = useState(persistedState.bulkPreviewCount ?? null);
+  const [bulkMvccBefore, setBulkMvccBefore] = useState(persistedState.bulkMvccBefore || null);
+  const [bulkMvccAfter, setBulkMvccAfter] = useState(persistedState.bulkMvccAfter || null);
+  const [categoryIndexStatus, setCategoryIndexStatus] = useState(persistedState.categoryIndexStatus || 'Unknown');
+  const [categoryIndexList, setCategoryIndexList] = useState(persistedState.categoryIndexList || []);
+  const [storageTable, setStorageTable] = useState(persistedState.storageTable || 'articles');
+  const [autovacuumEnabled, setAutovacuumEnabled] = useState(persistedState.autovacuumEnabled ?? true);
+  const [autovacuumStatus, setAutovacuumStatus] = useState(persistedState.autovacuumStatus || null);
+  const [loadTestResult, setLoadTestResult] = useState(persistedState.loadTestResult || null);
+  const [loadTestResultId, setLoadTestResultId] = useState(persistedState.loadTestResultId ?? null);
+  const [loadTestBefore, setLoadTestBefore] = useState(persistedState.loadTestBefore || null);
+  const [loadTestAfter, setLoadTestAfter] = useState(persistedState.loadTestAfter || null);
+  const [loadTestConcurrency, setLoadTestConcurrency] = useState(persistedState.loadTestConcurrency || '100');
+  const [loadTestOps, setLoadTestOps] = useState(persistedState.loadTestOps || '1000');
   const [message, setMessage] = useState('');
-  const [ginStatus, setGinStatus] = useState(null);
+  const [ginStatus, setGinStatus] = useState(persistedState.ginStatus || null);
   const [categories, setCategories] = useState([]);
-  const [demoCategoryId, setDemoCategoryId] = useState('');
+  const [demoCategoryId, setDemoCategoryId] = useState(persistedState.demoCategoryId || '');
 
   const [tags, setTags] = useState([]);
-  const [selectedTags, setSelectedTags] = useState([]);
-  const [benchmarkMode, setBenchmarkMode] = useState('all');
-  const [benchmarkRuns, setBenchmarkRuns] = useState('3');
-  const [benchmarkSummary, setBenchmarkSummary] = useState(null);
-  const [benchmarkExplain, setBenchmarkExplain] = useState('');
-  const [benchmarkQuery, setBenchmarkQuery] = useState('');
-  const [benchmarkMatchedCount, setBenchmarkMatchedCount] = useState(0);
-  const [benchmarkSampleIds, setBenchmarkSampleIds] = useState([]);
-  const [benchmarkTimes, setBenchmarkTimes] = useState([]);
-  const [benchmarkMedian, setBenchmarkMedian] = useState(null);
+  const [selectedTags, setSelectedTags] = useState(persistedState.selectedTags || []);
+  const [benchmarkMode, setBenchmarkMode] = useState(persistedState.benchmarkMode || 'all');
+  const [benchmarkRuns, setBenchmarkRuns] = useState(persistedState.benchmarkRuns || '3');
+  const [benchmarkSummary, setBenchmarkSummary] = useState(persistedState.benchmarkSummary || null);
+  const [benchmarkExplain, setBenchmarkExplain] = useState(persistedState.benchmarkExplain || '');
+  const [benchmarkQuery, setBenchmarkQuery] = useState(persistedState.benchmarkQuery || '');
+  const [benchmarkMatchedCount, setBenchmarkMatchedCount] = useState(persistedState.benchmarkMatchedCount || 0);
+  const [benchmarkSampleIds, setBenchmarkSampleIds] = useState(persistedState.benchmarkSampleIds || []);
+  const [benchmarkTimes, setBenchmarkTimes] = useState(persistedState.benchmarkTimes || []);
+  const [benchmarkMedian, setBenchmarkMedian] = useState(persistedState.benchmarkMedian ?? null);
+  const [indexModulesOpen, setIndexModulesOpen] = useState(persistedState.indexModulesOpen ?? false);
+  const [storageModulesOpen, setStorageModulesOpen] = useState(persistedState.storageModulesOpen ?? false);
 
   const selectedTagNames = useMemo(() => {
     const nameMap = new Map(tags.map((t) => [String(t.tag_id), t.name]));
@@ -149,10 +179,102 @@ export default function Admin({ role }) {
       loadGinStatus();
       loadCategoryIndexStatus();
       loadCategories();
-      fetchStorageStatus({ silent: true });
       loadLatestLoadTest({ silent: true });
     }
   }, [role]);
+
+  useEffect(() => {
+    if (role !== 'admin') return;
+    if (!hasInitializedStorageStatus.current) {
+      hasInitializedStorageStatus.current = true;
+      if (autovacuumStatus?.table !== storageTable) {
+        fetchStorageStatus({ silent: true });
+      }
+      return;
+    }
+    fetchStorageStatus({ silent: true });
+  }, [role, storageTable]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || role !== 'admin') return;
+    window.localStorage.setItem(
+      ADMIN_UI_STATE_KEY,
+      JSON.stringify({
+        sql,
+        label,
+        explain,
+        categoryId,
+        bulkSourceStatus,
+        bulkTargetStatus,
+        bulkBeforeDate,
+        bulkPreviewCount,
+        bulkMvccBefore,
+        bulkMvccAfter,
+        categoryIndexStatus,
+        categoryIndexList,
+        storageTable,
+        autovacuumEnabled,
+        autovacuumStatus,
+        loadTestResult,
+        loadTestResultId,
+        loadTestBefore,
+        loadTestAfter,
+        loadTestConcurrency,
+        loadTestOps,
+        ginStatus,
+        demoCategoryId,
+        selectedTags,
+        benchmarkMode,
+        benchmarkRuns,
+        benchmarkSummary,
+        benchmarkExplain,
+        benchmarkQuery,
+        benchmarkMatchedCount,
+        benchmarkSampleIds,
+        benchmarkTimes,
+        benchmarkMedian,
+        indexModulesOpen,
+        storageModulesOpen
+      })
+    );
+  }, [
+    role,
+    sql,
+    label,
+    explain,
+    categoryId,
+    bulkSourceStatus,
+    bulkTargetStatus,
+    bulkBeforeDate,
+    bulkPreviewCount,
+    bulkMvccBefore,
+    bulkMvccAfter,
+    categoryIndexStatus,
+    categoryIndexList,
+    storageTable,
+    autovacuumEnabled,
+    autovacuumStatus,
+    loadTestResult,
+    loadTestResultId,
+    loadTestBefore,
+    loadTestAfter,
+    loadTestConcurrency,
+    loadTestOps,
+    ginStatus,
+    demoCategoryId,
+    selectedTags,
+    benchmarkMode,
+    benchmarkRuns,
+    benchmarkSummary,
+    benchmarkExplain,
+    benchmarkQuery,
+    benchmarkMatchedCount,
+    benchmarkSampleIds,
+    benchmarkTimes,
+    benchmarkMedian,
+    indexModulesOpen,
+    storageModulesOpen
+  ]);
 
   if (role !== 'admin') {
     return <div className="card">Admin only.</div>;
@@ -168,7 +290,7 @@ export default function Admin({ role }) {
 
   const fetchStorageStatus = async ({ silent } = { silent: false }) => {
     if (!silent) setMessage('');
-    const res = await api.get('/api/admin/autovacuum_status', { params: { table: 'articles' } });
+    const res = await api.get('/api/admin/autovacuum_status', { params: { table: storageTable } });
     const data = res.data.data;
     setAutovacuumStatus(data);
     setAutovacuumEnabled(!(data && data.table_autovacuum_enabled_setting === false));
@@ -205,7 +327,7 @@ export default function Admin({ role }) {
   const applyAutovacuum = async () => {
     setMessage('');
     const res = await api.post('/api/admin/set_autovacuum', {
-      table: 'articles',
+      table: storageTable,
       enabled: autovacuumEnabled
     });
     setAutovacuumStatus(res.data.data || null);
@@ -219,6 +341,10 @@ export default function Admin({ role }) {
     setBulkPreviewCount(null);
     setBulkMvccBefore(null);
     setBulkMvccAfter(null);
+    if (bulkTargetStatus === 'archived' && !bulkBeforeDate) {
+      setMessage('Please select a before date for archived target.');
+      return;
+    }
     try {
       const before = await fetchArticlesMvccSample({ category_id: Number(categoryId), limit: 5 });
       setBulkMvccBefore(before);
@@ -228,7 +354,8 @@ export default function Admin({ role }) {
     const res = await api.post('/api/admin/bulk_status_change/preview', {
       category_id: Number(categoryId),
       source_status: bulkSourceStatus,
-      target_status: bulkTargetStatus
+      target_status: bulkTargetStatus,
+      before_date: bulkTargetStatus === 'archived' ? bulkBeforeDate : null
     });
     setBulkPreviewCount(res.data.count);
     setMessage(`Preview: will update ${res.data.count} rows`);
@@ -265,11 +392,16 @@ export default function Admin({ role }) {
   const applyBulkStatusChange = async () => {
     if (!bulkPreviewCount || bulkPreviewCount <= 0) return;
     if (!window.confirm(`Apply bulk status change to ${bulkPreviewCount} rows?`)) return;
+    if (bulkTargetStatus === 'archived' && !bulkBeforeDate) {
+      setMessage('Please select a before date for archived target.');
+      return;
+    }
     setMessage('');
     const res = await api.post('/api/admin/bulk_status_change/apply', {
       category_id: Number(categoryId),
       source_status: bulkSourceStatus,
-      target_status: bulkTargetStatus
+      target_status: bulkTargetStatus,
+      before_date: bulkTargetStatus === 'archived' ? bulkBeforeDate : null
     });
     setMessage(`Bulk status change done (${res.data.updated_rows}). Artifact: ${res.data.artifact}`);
     try {
@@ -300,7 +432,7 @@ export default function Admin({ role }) {
 
   const runVacuum = async () => {
     setMessage('');
-    const res = await api.post('/api/admin/run_vacuum', { table: 'articles' });
+    const res = await api.post('/api/admin/run_vacuum', { table: storageTable });
     setMessage(`Vacuum done. Artifact: ${res.data.artifact}`);
     fetchStorageStatus({ silent: true });
     loadMetrics();
@@ -308,12 +440,22 @@ export default function Admin({ role }) {
 
   const runLoadTest = async () => {
     setMessage('');
+    const concurrency = Number(loadTestConcurrency);
+    const ops = Number(loadTestOps);
+    if (!Number.isInteger(concurrency) || concurrency <= 0) {
+      setMessage('Concurrency must be a positive integer.');
+      return;
+    }
+    if (!Number.isInteger(ops) || ops <= 0) {
+      setMessage('Ops must be a positive integer.');
+      return;
+    }
     const latest = await api.get('/api/metrics/latest', { params: { operation: 'load_test', limit: 1 } });
     const prevId = latest.data?.rows?.[0]?.id ?? null;
     const res = await api.post('/api/admin/run_load_test', {
-      target: 'article_views',
-      concurrency: 100,
-      ops: 1000
+      target: 'article_view',
+      concurrency,
+      ops
     });
     setMessage(`Load test ${res.data.status}`);
     fetchStorageStatus({ silent: true });
@@ -370,6 +512,8 @@ export default function Admin({ role }) {
 
   return (
     <div>
+      <details open={indexModulesOpen} onToggle={(e) => setIndexModulesOpen(e.currentTarget.open)}>
+        <summary className="details-summary">Index Modules</summary>
       <div className="card">
         <h2>B-tree Benchmark Module (Category + Newest)</h2>
         <p>
@@ -402,7 +546,7 @@ export default function Admin({ role }) {
             </ul>
           </div>
         )}
-        <div>
+        <div className="button-row">
           <button onClick={runCreateIndex}>Create Canonical Index</button>
           <button className="secondary" onClick={runDropIndex}>Drop Category+Published Indexes</button>
         </div>
@@ -422,12 +566,16 @@ export default function Admin({ role }) {
             </option>
           ))}
         </select>
-        <button className="secondary" onClick={applyDemoSql}>Use Demo Query</button>
+        <div className="button-row">
+          <button className="secondary" onClick={applyDemoSql}>Use Demo Query</button>
+        </div>
         <label>SQL</label>
         <textarea rows="4" value={sql} onChange={(e) => setSql(e.target.value)} />
         <label>Label</label>
         <input value={label} onChange={(e) => setLabel(e.target.value)} />
-        <button onClick={runExplain}>Run EXPLAIN</button>
+        <div className="button-row">
+          <button onClick={runExplain}>Run EXPLAIN</button>
+        </div>
         {explain && <pre>{explain}</pre>}
       </div>
 
@@ -464,9 +612,11 @@ export default function Admin({ role }) {
       <div className="card">
         <h3>GIN Index Control</h3>
         <p>Status: {ginStatus || 'Unknown'}</p>
-        <button onClick={createGin}>Run with Index (Create GIN)</button>
-        <button className="secondary" onClick={dropGin}>Run without Index (Drop GIN)</button>
-        <button className="secondary" onClick={refreshTagIndex}>Refresh Tag Index (refresh materialized view data)</button>
+        <div className="button-row">
+          <button onClick={createGin}>Run with Index (Create GIN)</button>
+          <button className="secondary" onClick={dropGin}>Run without Index (Drop GIN)</button>
+          <button className="secondary" onClick={refreshTagIndex}>Refresh Tag Index</button>
+        </div>
       </div>
 
       <div className="card">
@@ -488,19 +638,27 @@ export default function Admin({ role }) {
         {benchmarkExplain && <pre>{benchmarkExplain}</pre>}
       </div>
 
+      </details>
+
+      <details open={storageModulesOpen} onToggle={(e) => setStorageModulesOpen(e.currentTarget.open)}>
+        <summary className="details-summary">Storage Modules</summary>
       <div className="card">
-        <h2>Storage Operations Module</h2>
+        <h2>Load Test Module</h2>
         <p>
-          These operations focus on storage behavior and maintenance, not index plan comparison.
+          Purpose: simulate concurrent write pressure on <code>article_view</code> and compare row growth plus WAL changes
+          before/after the workload.
+        </p>
+        <p>
+          Suggested flow: 1) Capture Before 2) Run Load Test 3) Capture After 4) Refresh Result.
         </p>
       </div>
 
       <div className="card">
         <h3>Load Test</h3>
         <label>Concurrency</label>
-        <input value={concurrency} onChange={(e) => setConcurrency(e.target.value)} disabled />
+        <input value={loadTestConcurrency} onChange={(e) => setLoadTestConcurrency(e.target.value)} />
         <label>Ops</label>
-        <input value={ops} onChange={(e) => setOps(e.target.value)} disabled />
+        <input value={loadTestOps} onChange={(e) => setLoadTestOps(e.target.value)} />
         <div className="button-stack">
           <div className="button-row">
             <button
@@ -532,10 +690,10 @@ export default function Admin({ role }) {
           </div>
         </div>
         <div style={{ marginTop: 12 }}>
-          <h3 style={{ marginBottom: 6 }}>Before/After: article_views count + WAL LSN</h3>
+          <h3 style={{ marginBottom: 6 }}>Before/After: article_view count + WAL LSN</h3>
           <div className="two-col">
-            <pre className="kv-pre">{`Before load test:\nselect count(*) from article_views;\nselect pg_current_wal_lsn();\n\ncount: ${loadTestBefore?.count ?? '-'}\nwal_lsn: ${loadTestBefore?.wal_lsn ?? '-'}\ncaptured_at: ${loadTestBefore?.captured_at ?? '-'}`}</pre>
-            <pre className="kv-pre">{`After load test:\nselect count(*) from article_views;\nselect pg_current_wal_lsn();\n\ncount: ${loadTestAfter?.count ?? '-'}\nwal_lsn: ${loadTestAfter?.wal_lsn ?? '-'}\ncaptured_at: ${loadTestAfter?.captured_at ?? '-'}`}</pre>
+            <pre className="kv-pre">{`Before load test:\nselect count(*) from article_view;\nselect pg_current_wal_lsn();\n\ncount: ${loadTestBefore?.count ?? '-'}\nwal_lsn: ${loadTestBefore?.wal_lsn ?? '-'}\ncaptured_at: ${loadTestBefore?.captured_at ?? '-'}`}</pre>
+            <pre className="kv-pre">{`After load test:\nselect count(*) from article_view;\nselect pg_current_wal_lsn();\n\ncount: ${loadTestAfter?.count ?? '-'}\nwal_lsn: ${loadTestAfter?.wal_lsn ?? '-'}\ncaptured_at: ${loadTestAfter?.captured_at ?? '-'}`}</pre>
           </div>
         </div>
         {loadTestResult && (
@@ -554,55 +712,129 @@ export default function Admin({ role }) {
       </div>
 
       <div className="card">
+        <h2>Storage Maintenance Module</h2>
+        <p>
+          Purpose: inspect and control table maintenance behavior, including autovacuum settings, manual vacuum, and
+          bulk status updates that create visible MVCC changes.
+        </p>
+        <p>
+          Suggested flow: 1) Refresh table stats 2) Toggle autovacuum if needed 3) Run VACUUM 4) Preview and apply
+          bulk change.
+        </p>
+      </div>
+
+      <div className="card">
         <h2>Autovacuum</h2>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <button onClick={() => fetchStorageStatus()}>Refresh</button>
-          <div>Current: {autovacuumIsOff ? 'OFF' : 'ON'}</div>
-          <div>Table: articles</div>
+        <div className="two-col">
+          <div>
+            <label>Table</label>
+            <select
+              value={storageTable}
+              onChange={(e) => {
+                setStorageTable(e.target.value);
+                setAutovacuumStatus(null);
+              }}
+            >
+              {STORAGE_TABLE_OPTIONS.map((tableName) => (
+                <option key={tableName} value={tableName}>
+                  {tableName}
+                </option>
+              ))}
+            </select>
+            <h3 style={{ marginBottom: 6 }}>Toggle</h3>
+            <label>
+              <input
+                type="checkbox"
+                checked={autovacuumEnabled}
+                onChange={(e) => setAutovacuumEnabled(e.target.checked)}
+              />{' '}
+              autovacuum_enabled (table)
+            </label>
+            <div className="button-row">
+              <button className="secondary" onClick={applyAutovacuum}>Apply</button>
+            </div>
+          </div>
+          <div>
+            <h3 style={{ marginBottom: 6 }}>Refresh</h3>
+            <div className="button-row" style={{ marginBottom: 8 }}>
+              <button onClick={() => fetchStorageStatus()}>Refresh</button>
+              <div>Current: {autovacuumIsOff ? 'OFF' : 'ON'}</div>
+              <div>Table: {storageTable}</div>
+            </div>
+            <h3 style={{ marginBottom: 6 }}>Storage Stats</h3>
+            <div>n_live_tup: {storageLive ?? '-'}</div>
+            <div>n_dead_tup: {storageDead ?? '-'}</div>
+          </div>
         </div>
-        <label>
-          <input
-            type="checkbox"
-            checked={autovacuumEnabled}
-            onChange={(e) => setAutovacuumEnabled(e.target.checked)}
-          />{' '}
-          autovacuum_enabled (table)
-        </label>
-        <div>
-          <button className="secondary" onClick={applyAutovacuum}>Apply</button>
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <h3 style={{ marginBottom: 6 }}>Storage Stats</h3>
-          <div>n_live_tup: {storageLive ?? '-'}</div>
-          <div>n_dead_tup: {storageDead ?? '-'}</div>
+      </div>
+
+      <div className="card">
+        <h2>VACUUM</h2>
+        <div className="button-row">
+          <select
+            value={storageTable}
+            onChange={(e) => {
+              setStorageTable(e.target.value);
+              setAutovacuumStatus(null);
+            }}
+            style={{ maxWidth: 240 }}
+          >
+            {STORAGE_TABLE_OPTIONS.map((tableName) => (
+              <option key={tableName} value={tableName}>
+                {tableName}
+              </option>
+            ))}
+          </select>
+          <button onClick={runVacuum}>VACUUM</button>
         </div>
       </div>
 
       <div className="card">
         <h2>Bulk Status Change</h2>
-        <label>Source Status</label>
-        <select
-          value={bulkSourceStatus}
-          onChange={(e) => {
-            setBulkSourceStatus(e.target.value);
-            setBulkPreviewCount(null);
-          }}
-        >
-          <option value="published">published</option>
-          <option value="draft">draft</option>
-        </select>
-        <label>Target Status</label>
-        <select
-          value={bulkTargetStatus}
-          onChange={(e) => {
-            setBulkTargetStatus(e.target.value);
-            setBulkPreviewCount(null);
-          }}
-        >
-          <option value="published">published</option>
-          <option value="draft">draft</option>
-          <option value="archived">archived</option>
-        </select>
+        <div className="two-col-flex">
+          <div>
+            <label>Source Status</label>
+            <select
+              value={bulkSourceStatus}
+              onChange={(e) => {
+                setBulkSourceStatus(e.target.value);
+                setBulkPreviewCount(null);
+              }}
+            >
+              <option value="published">published</option>
+              <option value="draft">draft</option>
+            </select>
+          </div>
+          <div>
+            <label>Target Status</label>
+            <select
+              value={bulkTargetStatus}
+              onChange={(e) => {
+                const next = e.target.value;
+                setBulkTargetStatus(next);
+                setBulkPreviewCount(null);
+                if (next !== 'archived') setBulkBeforeDate('');
+              }}
+            >
+              <option value="published">published</option>
+              <option value="draft">draft</option>
+              <option value="archived">archived</option>
+            </select>
+          </div>
+        </div>
+        {bulkTargetStatus === 'archived' && (
+          <>
+            <label>Before Date (created_at &lt; before_date)</label>
+            <input
+              type="date"
+              value={bulkBeforeDate}
+              onChange={(e) => {
+                setBulkBeforeDate(e.target.value);
+                setBulkPreviewCount(null);
+              }}
+            />
+          </>
+        )}
         <label>Category ID</label>
         <input
           value={categoryId}
@@ -647,11 +879,7 @@ export default function Admin({ role }) {
         )}
       </div>
 
-      <div className="card">
-        <h2>VACUUM</h2>
-        <div>Table: articles</div>
-        <button onClick={runVacuum}>VACUUM articles</button>
-      </div>
+      </details>
 
       {message && <div className="card">{message}</div>}
 
@@ -659,8 +887,16 @@ export default function Admin({ role }) {
         <h2>Experiment Results</h2>
         <button onClick={loadMetrics}>Refresh</button>
         {metrics.map((row) => (
-          <div key={row.id}>
-            <strong>{row.operation}</strong> - {formatDateTime(row.created_at)} - {row.artifact_path}
+          <div key={row.id} style={{ marginTop: 12 }}>
+            <div>
+              <strong>{row.operation}</strong> - {formatDateTime(row.created_at)} - {row.artifact_path}
+            </div>
+            {row.target_sql && (
+              <details style={{ marginTop: 6 }}>
+                <summary className="details-summary">SQL</summary>
+                <pre>{row.target_sql}</pre>
+              </details>
+            )}
           </div>
         ))}
       </div>

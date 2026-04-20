@@ -7,6 +7,7 @@ import formatDateTime from '../utils/formatDateTime';
 export default function Feed({ role }) {
   const [rows, setRows] = useState([]);
   const [category, setCategory] = useState('');
+  const [author, setAuthor] = useState('');
   const [error, setError] = useState(null);
   const [tags, setTags] = useState([]);
   const [selectedTags, setSelectedTags] = useState([]);
@@ -22,6 +23,7 @@ export default function Feed({ role }) {
     try {
       const params = {};
       if (category) params.category = Number(category);
+      if (author.trim()) params.author = author.trim();
       const res = await api.get('/api/articles', { params });
       setRows(res.data.rows || []);
       setResultCount((res.data.rows || []).length);
@@ -76,6 +78,8 @@ export default function Feed({ role }) {
         <h2>Feed</h2>
         <label>Category ID (optional)</label>
         <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. 1" />
+        <label>Author ID or Username (optional)</label>
+        <input value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="e.g. 12 or author1" />
         <button onClick={load}>Refresh Feed (Collect EXPLAIN)</button>
         {error && <p>{error}</p>}
       </div>
@@ -92,7 +96,7 @@ export default function Feed({ role }) {
         <label>Sort</label>
         <select value={sort} onChange={(e) => setSort(e.target.value)}>
           <option value="published_at">Newest</option>
-          <option value="views_count">Most Viewed</option>
+          <option value="view_count">Most Viewed</option>
         </select>
         <label>Limit</label>
         <input value={limit} onChange={(e) => setLimit(e.target.value)} />

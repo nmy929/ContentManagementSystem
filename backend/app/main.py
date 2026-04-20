@@ -4,7 +4,7 @@ import os
 import re
 import subprocess
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -37,15 +37,22 @@ BTREE_BENCHMARK_INDEX_SQL = (
 )
 APP_TIMEZONE = ZoneInfo("America/Los_Angeles")
 
+CORS_ALLOW_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOW_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000",
+    ).split(",")
+    if origin.strip()
+]
+
 app = FastAPI(title="Postgres CMS")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"]
-,
+    allow_origins=CORS_ALLOW_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"]
-,
+    allow_methods=["*"],
     allow_headers=["*"]
 )
 
@@ -58,6 +65,7 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     token: str
     role: str
+    user_id: int
 
 
 class ArticleCreate(BaseModel):
@@ -79,17 +87,6 @@ class CommentCreate(BaseModel):
 
 class CommentFlagUpdate(BaseModel):
     is_flagged: bool
-
-
-class CommentResponse(BaseModel):
-    comment_id: int
-    article_id: int
-    user_id: Optional[int] = None
-    username: Optional[str] = None
-    role: Optional[str] = None
-    content: str
-    created_at: Optional[datetime] = None
-    is_flagged: bool = False
 
 
 class BulkUnpublishRequest(BaseModel):
@@ -131,9 +128,14 @@ class BulkStatusChangePreviewRequest(BaseModel):
     category_id: int
     source_status: str
     target_status: str
+    before_date: Optional[str] = None
 
 
 TABLE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)?$")
+REVISION_PK_COLUMN = "id"
+ARTICLES_VIEW_COUNT_COLUMN = "view_count"
+ARTICLES_CURRENT_REVISION_COLUMN = "current_revision_id"
+ARTICLE_VIEWS_TABLE = "article_view"
 
 
 def normalize_table_ident(table: str) -> str:
@@ -193,6 +195,27 @@ def require_roles(*roles: str):
     return _dependency
 
 
+async def ensure_article_editable_by_user(
+    conn: asyncpg.Connection,
+    article_id: int,
+    user: Dict[str, Any],
+) -> asyncpg.Record:
+    row = await conn.fetchrow(
+        f"""
+        SELECT a.article_id, a.author_id, a.title, r.content
+        FROM articles a
+        LEFT JOIN revisions r ON r.{REVISION_PK_COLUMN} = a.{ARTICLES_CURRENT_REVISION_COLUMN}
+        WHERE a.article_id = $1
+        """,
+        article_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    if user["role"] == ROLE_AUTHOR and row["author_id"] != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Authors can only edit their own articles")
+    return row
+
+
 def local_now() -> datetime:
     # Store Los Angeles local clock time while keeping a naive timestamp to match the dataset schema.
     return datetime.now(APP_TIMEZONE).replace(tzinfo=None)
@@ -245,6 +268,26 @@ async def insert_experiment(
         local_now(),
     )
     return row["id"]
+
+
+async def insert_admin_action(
+    conn: asyncpg.Connection,
+    admin_id: int,
+    action: str,
+    experiment_id: int,
+    target_sql: Optional[str] = None,
+) -> None:
+    await conn.execute(
+        """
+        INSERT INTO admin_actions (admin_id, action, target_sql, created_at, experiment_id)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        admin_id,
+        action,
+        target_sql,
+        local_now(),
+        experiment_id,
+    )
 
 def parse_explain_summary(explain_text: str) -> Dict[str, Optional[str]]:
     scan_type = None
@@ -434,12 +477,13 @@ async def login(payload: LoginRequest, pool: asyncpg.pool.Pool = Depends(get_poo
                 "iat": int(datetime.now(APP_TIMEZONE).timestamp()),
             }
         )
-        return LoginResponse(token=token, role=row["role"])
+        return LoginResponse(token=token, role=row["role"], user_id=row["user_id"])
 
 
 @app.get("/api/articles")
 async def get_articles(
     category: Optional[int] = None,
+    author: Optional[str] = None,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user: Dict[str, Any] = Depends(require_roles(ROLE_AUTHOR, ROLE_EDITOR, ROLE_ADMIN)),
@@ -453,6 +497,16 @@ async def get_articles(
     if category is not None:
         params.append(category)
         base_sql += f" AND category_id = ${len(params)}"
+    if author:
+        author_value = author.strip()
+        if author_value:
+            params.append(int(author_value) if author_value.isdigit() else f"%{author_value}%")
+            if author_value.isdigit():
+                base_sql += f" AND author_id = ${len(params)}"
+            else:
+                base_sql += (
+                    f" AND author_id IN (SELECT user_id FROM users WHERE username ILIKE ${len(params)})"
+                )
     params.extend([limit, offset])
     base_sql += f" ORDER BY published_at DESC LIMIT ${len(params)-1} OFFSET ${len(params)}"
 
@@ -464,7 +518,7 @@ async def get_articles(
             base_sql,
             params,
             "feed",
-            {"category": category, "limit": limit, "offset": offset},
+            {"category": category, "author": author, "limit": limit, "offset": offset},
         )
     response: Dict[str, Any] = {"rows": data, "explain_artifact": explain_info["artifact"]}
     if user["role"] == ROLE_ADMIN:
@@ -496,7 +550,7 @@ async def list_categories(
 async def get_articles_by_tags(
     tag_ids: str,
     mode: str = Query("any", pattern="^(any|all)$"),
-    sort: str = Query("published_at", pattern="^(published_at|views_count)$"),
+    sort: str = Query("published_at", pattern="^(published_at|view_count)$"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user: Dict[str, Any] = Depends(require_roles(ROLE_AUTHOR, ROLE_EDITOR, ROLE_ADMIN)),
@@ -506,16 +560,16 @@ async def get_articles_by_tags(
     if not ids:
         raise HTTPException(status_code=400, detail="tag_ids required")
     op = "&&" if mode == "any" else "@>"
-    sort_col = "published_at" if sort == "published_at" else "views_count"
+    sort_col = "published_at" if sort == "published_at" else ARTICLES_VIEW_COUNT_COLUMN
     base_sql = (
-        "SELECT a.article_id, a.title, a.published_at, a.author_id, a.views_count, "
+        f"SELECT a.article_id, a.title, a.published_at, a.author_id, a.{ARTICLES_VIEW_COUNT_COLUMN} AS view_count, "
         "ati.tag_ids, ARRAY_AGG(t.name ORDER BY t.name) AS tag_names "
         "FROM articles a "
         "JOIN articles_tag_index ati ON ati.article_id = a.article_id "
         "LEFT JOIN article_tags at ON at.article_id = a.article_id "
         "LEFT JOIN tags t ON t.tag_id = at.tag_id "
         f"WHERE ati.tag_ids {op} $1::int[] "
-        "GROUP BY a.article_id, a.title, a.published_at, a.author_id, a.views_count, ati.tag_ids "
+        f"GROUP BY a.article_id, a.title, a.published_at, a.author_id, a.{ARTICLES_VIEW_COUNT_COLUMN}, ati.tag_ids "
         f"ORDER BY a.{sort_col} DESC "
         "LIMIT $2 OFFSET $3"
     )
@@ -544,11 +598,11 @@ async def get_article(
 ) -> Dict[str, Any]:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            """
+            f"""
             SELECT a.article_id, a.title, a.author_id, a.category_id, a.status,
-                   a.published_at, a.views_count, r.content
+                   a.published_at, a.{ARTICLES_VIEW_COUNT_COLUMN} AS view_count, r.content
             FROM articles a
-            LEFT JOIN revisions r ON r.revision_id = a.current_rev
+            LEFT JOIN revisions r ON r.{REVISION_PK_COLUMN} = a.{ARTICLES_CURRENT_REVISION_COLUMN}
             WHERE a.article_id = $1
             """,
             article_id,
@@ -571,8 +625,8 @@ async def create_article(
         try:
             async with conn.transaction():
                 article_row = await conn.fetchrow(
-                    """
-                    INSERT INTO articles (author_id, category_id, status, title, slug, published_at, views_count, created_at, updated_at)
+                    f"""
+                    INSERT INTO articles (author_id, category_id, status, title, slug, published_at, {ARTICLES_VIEW_COUNT_COLUMN}, created_at, updated_at)
                     VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $7)
                     RETURNING article_id
                     """,
@@ -587,10 +641,10 @@ async def create_article(
                 article_id = article_row["article_id"]
                 slug = f"article-{article_id}"
                 revision_row = await conn.fetchrow(
-                    """
+                    f"""
                     INSERT INTO revisions (article_id, editor_id, title, content, created_at)
                     VALUES ($1, $2, $3, $4, $5)
-                    RETURNING revision_id
+                    RETURNING {REVISION_PK_COLUMN}
                     """,
                     article_id,
                     user["user_id"],
@@ -599,8 +653,8 @@ async def create_article(
                     now,
                 )
                 await conn.execute(
-                    "UPDATE articles SET current_rev = $1, slug = $2 WHERE article_id = $3",
-                    revision_row["revision_id"],
+                    f"UPDATE articles SET {ARTICLES_CURRENT_REVISION_COLUMN} = $1, slug = $2 WHERE article_id = $3",
+                    revision_row[REVISION_PK_COLUMN],
                     slug,
                     article_id,
                 )
@@ -637,24 +691,14 @@ async def update_article(
     async with pool.acquire() as conn:
         before = await capture_pg_stat(conn)
         async with conn.transaction():
-            row = await conn.fetchrow(
-                """
-                SELECT a.article_id, a.title, r.content
-                FROM articles a
-                LEFT JOIN revisions r ON r.revision_id = a.current_rev
-                WHERE a.article_id = $1
-                """,
-                article_id,
-            )
-            if not row:
-                raise HTTPException(status_code=404, detail="Not found")
+            row = await ensure_article_editable_by_user(conn, article_id, user)
             title = payload.title or row["title"]
             content = payload.content if payload.content is not None else (row["content"] or "")
             revision_row = await conn.fetchrow(
-                """
+                f"""
                 INSERT INTO revisions (article_id, editor_id, title, content, created_at)
                 VALUES ($1, $2, $3, $4, $5)
-                RETURNING revision_id
+                RETURNING {REVISION_PK_COLUMN}
                 """,
                 article_id,
                 user["user_id"],
@@ -663,8 +707,9 @@ async def update_article(
                 now,
             )
             await conn.execute(
-                "UPDATE articles SET current_rev = $1, updated_at = $2 WHERE article_id = $3",
-                revision_row["revision_id"],
+                f"UPDATE articles SET title = $1, {ARTICLES_CURRENT_REVISION_COLUMN} = $2, updated_at = $3 WHERE article_id = $4",
+                title,
+                revision_row[REVISION_PK_COLUMN],
                 now,
                 article_id,
             )
@@ -697,13 +742,13 @@ async def record_view(
             if not article_exists:
                 raise HTTPException(status_code=404, detail="Not found")
             await conn.execute(
-                "INSERT INTO article_views (article_id, viewer_id, viewed_at) VALUES ($1, $2, $3)",
+                f"INSERT INTO {ARTICLE_VIEWS_TABLE} (article_id, viewer_id, viewed_at) VALUES ($1, $2, $3)",
                 article_id,
                 user["user_id"],
                 local_now(),
             )
             await conn.execute(
-                "UPDATE articles SET views_count = views_count + 1 WHERE article_id = $1",
+                f"UPDATE articles SET {ARTICLES_VIEW_COUNT_COLUMN} = {ARTICLES_VIEW_COUNT_COLUMN} + 1 WHERE article_id = $1",
                 article_id,
             )
     return {"status": "ok"}
@@ -740,17 +785,18 @@ async def list_comments(
         )
         if not article_exists:
             raise HTTPException(status_code=404, detail="Not found")
-        rows = await conn.fetch(
-            """
+        comment_sql = """
             SELECT c.comment_id, c.article_id, c.user_id, u.username, u.role,
                    c.content, c.created_at, c.is_flagged
             FROM comments c
             LEFT JOIN users u ON u.user_id = c.user_id
             WHERE c.article_id = $1
-            ORDER BY c.created_at DESC, c.comment_id DESC
-            """,
-            article_id,
-        )
+        """
+        params: List[Any] = [article_id]
+        if user["role"] == ROLE_AUTHOR:
+            comment_sql += " AND c.is_flagged = false"
+        comment_sql += " ORDER BY c.created_at DESC, c.comment_id DESC"
+        rows = await conn.fetch(comment_sql, *params)
     return serialize_datetimes({"rows": [dict(r) for r in rows]})
 
 
@@ -837,13 +883,26 @@ async def bulk_unpublish(
         vacuum_output = run_vacuum_psql("articles")
         artifact_text = "-- pg_stat_before --\n" + before + "\n\n-- pg_stat_after --\n" + after + "\n\n-- vacuum --\n" + vacuum_output
         artifact = await write_artifact(artifact_text, "bulk_unpublish")
-        exp_id = await insert_experiment(
-            conn,
-            "bulk_unpublish",
-            {"category_id": payload.category_id, "older_than_days": payload.older_than_days},
-            None,
-            artifact,
-        )
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                "bulk_unpublish",
+                {"category_id": payload.category_id, "older_than_days": payload.older_than_days},
+                None,
+                artifact,
+            )
+            await insert_admin_action(
+                conn,
+                user["user_id"],
+                "bulk_unpublish",
+                exp_id,
+                target_sql=(
+                    "UPDATE articles "
+                    "SET status = 'archived' "
+                    f"WHERE category_id = {payload.category_id} "
+                    f"AND published_at < '{format_datetime(cutoff)}'"
+                ),
+            )
     return {"status": "ok", "result": result, "artifact": artifact, "experiment_id": exp_id}
 
 
@@ -864,13 +923,15 @@ async def drop_index(
             f"before_size={before}\nafter_size={after}",
             "drop_index",
         )
-        exp_id = await insert_experiment(
-            conn,
-            "drop_index",
-            {"sql": sql},
-            None,
-            artifact,
-        )
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                "drop_index",
+                {"sql": sql},
+                None,
+                artifact,
+            )
+            await insert_admin_action(conn, user["user_id"], "drop_index", exp_id, target_sql=sql)
     return {"status": "ok", "artifact": artifact, "experiment_id": exp_id}
 
 
@@ -891,13 +952,15 @@ async def create_index(
             f"before_size={before}\nafter_size={after}",
             "create_index",
         )
-        exp_id = await insert_experiment(
-            conn,
-            "create_index",
-            {"sql": sql},
-            None,
-            artifact,
-        )
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                "create_index",
+                {"sql": sql},
+                None,
+                artifact,
+            )
+            await insert_admin_action(conn, user["user_id"], "create_index", exp_id, target_sql=sql)
     return {"status": "ok", "artifact": artifact, "experiment_id": exp_id}
 
 
@@ -910,18 +973,30 @@ async def run_explain_custom(
     if not only_select_sql(payload.sql):
         raise HTTPException(status_code=400, detail="Only SELECT statements are allowed")
     async with pool.acquire() as conn:
-        explain_info = await run_explain(
-            conn,
-            payload.sql,
-            [],
-            payload.label,
-            {"label": payload.label},
-        )
+        explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) {payload.sql}"
+        rows = await conn.fetch(explain_sql)
+        explain_text = "\n".join([r[0] for r in rows])
+        artifact = await write_artifact(explain_text, f"explain_{payload.label}")
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                payload.label,
+                {"label": payload.label},
+                explain_text,
+                artifact,
+            )
+            await insert_admin_action(
+                conn,
+                user["user_id"],
+                "run_explain",
+                exp_id,
+                target_sql=payload.sql,
+            )
     return {
         "status": "ok",
-        "artifact": explain_info["artifact"],
-        "experiment_id": explain_info["id"],
-        "explain_text": explain_info["explain_text"],
+        "artifact": artifact,
+        "experiment_id": exp_id,
+        "explain_text": explain_text,
     }
 
 
@@ -935,13 +1010,15 @@ async def run_vacuum(
     vacuum_output = run_vacuum_psql(table)
     async with pool.acquire() as conn:
         artifact = await write_artifact(vacuum_output, f"vacuum_{table}")
-        exp_id = await insert_experiment(
-            conn,
-            "vacuum",
-            {"table": table},
-            None,
-            artifact,
-        )
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                "vacuum",
+                {"table": table},
+                None,
+                artifact,
+            )
+            await insert_admin_action(conn, user["user_id"], "vacuum", exp_id, target_sql=f"VACUUM {table}")
     return {"status": "ok", "artifact": artifact, "experiment_id": exp_id}
 
 
@@ -1014,13 +1091,15 @@ async def set_autovacuum(
             "autovacuum_toggle",
             "json",
         )
-        exp_id = await insert_experiment(
-            conn,
-            "autovacuum_toggle",
-            {"table": table, "enabled": payload.enabled},
-            None,
-            artifact,
-        )
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                "autovacuum_toggle",
+                {"table": table, "enabled": payload.enabled},
+                None,
+                artifact,
+            )
+            await insert_admin_action(conn, user["user_id"], "autovacuum_toggle", exp_id, target_sql=f"ALTER TABLE {table}")
     return {"status": "ok", "artifact": artifact, "experiment_id": exp_id, "data": after}
 
 
@@ -1031,6 +1110,14 @@ def normalize_article_status(value: str) -> str:
     return status
 
 
+def parse_before_date(value: str) -> datetime:
+    try:
+        d = date.fromisoformat(value.strip())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="before_date must be YYYY-MM-DD") from exc
+    return datetime(d.year, d.month, d.day)
+
+
 @app.post("/api/admin/bulk_status_change/preview")
 async def bulk_status_change_preview(
     payload: BulkStatusChangePreviewRequest,
@@ -1038,13 +1125,26 @@ async def bulk_status_change_preview(
     pool: asyncpg.pool.Pool = Depends(get_pool),
 ) -> Dict[str, Any]:
     source = normalize_article_status(payload.source_status)
-    normalize_article_status(payload.target_status)
+    target = normalize_article_status(payload.target_status)
+    before_dt: Optional[datetime] = None
+    if target == "archived":
+        if not payload.before_date:
+            raise HTTPException(status_code=400, detail="before_date is required when target_status is archived")
+        before_dt = parse_before_date(payload.before_date)
     async with pool.acquire() as conn:
-        count = await conn.fetchval(
-            "SELECT COUNT(*) FROM articles WHERE category_id = $1 AND status = $2",
-            payload.category_id,
-            source,
-        )
+        if before_dt is not None:
+            count = await conn.fetchval(
+                "SELECT COUNT(*) FROM articles WHERE category_id = $1 AND status = $2 AND created_at < $3",
+                payload.category_id,
+                source,
+                before_dt,
+            )
+        else:
+            count = await conn.fetchval(
+                "SELECT COUNT(*) FROM articles WHERE category_id = $1 AND status = $2",
+                payload.category_id,
+                source,
+            )
     return {"status": "ok", "count": int(count or 0)}
 
 
@@ -1056,19 +1156,39 @@ async def bulk_status_change_apply(
 ) -> Dict[str, Any]:
     source = normalize_article_status(payload.source_status)
     target = normalize_article_status(payload.target_status)
+    before_dt: Optional[datetime] = None
+    if target == "archived":
+        if not payload.before_date:
+            raise HTTPException(status_code=400, detail="before_date is required when target_status is archived")
+        before_dt = parse_before_date(payload.before_date)
     async with pool.acquire() as conn:
         before = await capture_pg_stat(conn)
-        result = await conn.execute(
-            """
-            UPDATE articles
-            SET status = $3
-            WHERE category_id = $1
-              AND status = $2
-            """,
-            payload.category_id,
-            source,
-            target,
-        )
+        if before_dt is not None:
+            result = await conn.execute(
+                """
+                UPDATE articles
+                SET status = $3
+                WHERE category_id = $1
+                  AND status = $2
+                  AND created_at < $4
+                """,
+                payload.category_id,
+                source,
+                target,
+                before_dt,
+            )
+        else:
+            result = await conn.execute(
+                """
+                UPDATE articles
+                SET status = $3
+                WHERE category_id = $1
+                  AND status = $2
+                """,
+                payload.category_id,
+                source,
+                target,
+            )
         after = await capture_pg_stat(conn)
 
         updated_rows = 0
@@ -1086,18 +1206,44 @@ async def bulk_status_change_apply(
             + str(result),
             "bulk_status_change",
         )
-        exp_id = await insert_experiment(
-            conn,
-            "bulk_status_change",
-            {
+        async with conn.transaction():
+            exp_params: Dict[str, Any] = {
                 "category_id": payload.category_id,
                 "source_status": source,
                 "target_status": target,
                 "updated_rows": updated_rows,
-            },
-            None,
-            artifact,
-        )
+            }
+            if payload.before_date:
+                exp_params["before_date"] = payload.before_date
+            exp_id = await insert_experiment(
+                conn,
+                "bulk_status_change",
+                exp_params,
+                None,
+                artifact,
+            )
+            if before_dt is not None:
+                target_sql = (
+                    "UPDATE articles "
+                    f"SET status = '{target}' "
+                    f"WHERE category_id = {payload.category_id} "
+                    f"AND status = '{source}' "
+                    f"AND created_at < '{format_datetime(before_dt)}'"
+                )
+            else:
+                target_sql = (
+                    "UPDATE articles "
+                    f"SET status = '{target}' "
+                    f"WHERE category_id = {payload.category_id} "
+                    f"AND status = '{source}'"
+                )
+            await insert_admin_action(
+                conn,
+                user["user_id"],
+                "bulk_status_change",
+                exp_id,
+                target_sql=target_sql,
+            )
     return {
         "status": "ok",
         "result": result,
@@ -1107,7 +1253,7 @@ async def bulk_status_change_apply(
     }
 
 
-async def load_test_job(target: str, concurrency: int, ops: int, pool: asyncpg.pool.Pool) -> None:
+async def load_test_job(target: str, concurrency: int, ops: int, admin_id: int, pool: asyncpg.pool.Pool) -> None:
     start = local_now()
     errors = 0
     async with pool.acquire() as conn:
@@ -1125,12 +1271,17 @@ async def load_test_job(target: str, concurrency: int, ops: int, pool: asyncpg.p
             try:
                 article_id = min_id + (i % max(1, (max_id - min_id + 1)))
                 async with pool.acquire() as conn:
-                    await conn.execute(
-                        "INSERT INTO article_views (article_id, viewer_id, viewed_at) VALUES ($1, $2, $3)",
-                        article_id,
-                        viewer_id,
-                        local_now(),
-                    )
+                    async with conn.transaction():
+                        await conn.execute(
+                            f"INSERT INTO {ARTICLE_VIEWS_TABLE} (article_id, viewer_id, viewed_at) VALUES ($1, $2, $3)",
+                            article_id,
+                            viewer_id,
+                            local_now(),
+                        )
+                        await conn.execute(
+                            f"UPDATE articles SET {ARTICLES_VIEW_COUNT_COLUMN} = {ARTICLES_VIEW_COUNT_COLUMN} + 1 WHERE article_id = $1",
+                            article_id,
+                        )
             except Exception:
                 errors += 1
 
@@ -1150,7 +1301,19 @@ async def load_test_job(target: str, concurrency: int, ops: int, pool: asyncpg.p
     }
     async with pool.acquire() as conn:
         artifact = await write_artifact(json.dumps(result, indent=2), "load_test", "json")
-        await insert_experiment(conn, "load_test", result, None, artifact)
+        async with conn.transaction():
+            exp_id = await insert_experiment(conn, "load_test", result, None, artifact)
+            await insert_admin_action(
+                conn,
+                admin_id,
+                "load_test",
+                exp_id,
+                target_sql=(
+                    f"-- load test target={target}, concurrency={concurrency}, ops={ops}\n"
+                    f"INSERT INTO {ARTICLE_VIEWS_TABLE} (article_id, viewer_id, viewed_at) VALUES ($1, $2, $3);\n"
+                    f"UPDATE articles SET {ARTICLES_VIEW_COUNT_COLUMN} = {ARTICLES_VIEW_COUNT_COLUMN} + 1 WHERE article_id = $1;"
+                ),
+            )
 
 
 @app.post("/api/admin/run_load_test")
@@ -1160,7 +1323,9 @@ async def run_load_test(
     user: Dict[str, Any] = Depends(require_roles(ROLE_ADMIN)),
     pool: asyncpg.pool.Pool = Depends(get_pool),
 ) -> Dict[str, Any]:
-    background_tasks.add_task(load_test_job, payload.target, payload.concurrency, payload.ops, pool)
+    background_tasks.add_task(
+        load_test_job, payload.target, payload.concurrency, payload.ops, user["user_id"], pool
+    )
     return {"status": "queued"}
 
 
@@ -1170,7 +1335,7 @@ async def article_views_snapshot(
     pool: asyncpg.pool.Pool = Depends(get_pool),
 ) -> Dict[str, Any]:
     async with pool.acquire() as conn:
-        count = await conn.fetchval("SELECT COUNT(*) FROM article_views")
+        count = await conn.fetchval(f"SELECT COUNT(*) FROM {ARTICLE_VIEWS_TABLE}")
         wal_lsn = await conn.fetchval("SELECT pg_current_wal_lsn()")
     return serialize_datetimes(
         {
@@ -1224,7 +1389,27 @@ async def create_tags_gin_index(
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_articles_tagids_gin ON articles_tag_index USING GIN(tag_ids)"
         )
-    return {"status": "ok"}
+        artifact = await write_artifact(
+            json.dumps({"action": "tags_index_create", "index": "idx_articles_tagids_gin"}, indent=2),
+            "tags_index_create",
+            "json",
+        )
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                "tags_index_create",
+                {"index": "idx_articles_tagids_gin"},
+                None,
+                artifact,
+            )
+            await insert_admin_action(
+                conn,
+                user["user_id"],
+                "tags_index_create",
+                exp_id,
+                target_sql="CREATE INDEX IF NOT EXISTS idx_articles_tagids_gin ON articles_tag_index USING GIN(tag_ids)",
+            )
+    return {"status": "ok", "artifact": artifact, "experiment_id": exp_id}
 
 
 @app.post("/api/admin/tags_index/drop")
@@ -1234,7 +1419,27 @@ async def drop_tags_gin_index(
 ) -> Dict[str, Any]:
     async with pool.acquire() as conn:
         await conn.execute("DROP INDEX IF EXISTS idx_articles_tagids_gin")
-    return {"status": "ok"}
+        artifact = await write_artifact(
+            json.dumps({"action": "tags_index_drop", "index": "idx_articles_tagids_gin"}, indent=2),
+            "tags_index_drop",
+            "json",
+        )
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                "tags_index_drop",
+                {"index": "idx_articles_tagids_gin"},
+                None,
+                artifact,
+            )
+            await insert_admin_action(
+                conn,
+                user["user_id"],
+                "tags_index_drop",
+                exp_id,
+                target_sql="DROP INDEX IF EXISTS idx_articles_tagids_gin",
+            )
+    return {"status": "ok", "artifact": artifact, "experiment_id": exp_id}
 
 
 @app.get("/api/admin/tags_index/status")
@@ -1263,7 +1468,27 @@ async def refresh_tags_index(
 ) -> Dict[str, Any]:
     async with pool.acquire() as conn:
         await conn.execute("REFRESH MATERIALIZED VIEW articles_tag_index")
-    return {"status": "ok"}
+        artifact = await write_artifact(
+            json.dumps({"action": "refresh_tags_index", "view": "articles_tag_index"}, indent=2),
+            "refresh_tags_index",
+            "json",
+        )
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                "refresh_tags_index",
+                {"view": "articles_tag_index"},
+                None,
+                artifact,
+            )
+            await insert_admin_action(
+                conn,
+                user["user_id"],
+                "refresh_tags_index",
+                exp_id,
+                target_sql="REFRESH MATERIALIZED VIEW articles_tag_index",
+            )
+    return {"status": "ok", "artifact": artifact, "experiment_id": exp_id}
 
 
 @app.get("/api/admin/category_index/status")
@@ -1302,13 +1527,23 @@ async def create_category_index(
             "category_index_create",
             "json",
         )
-        exp_id = await insert_experiment(
-            conn,
-            "category_index_create",
-            {"dropped_indexes": dropped_indexes, "canonical_index_name": BTREE_BENCHMARK_INDEX_NAME},
-            None,
-            artifact,
-        )
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                "category_index_create",
+                {"dropped_indexes": dropped_indexes, "canonical_index_name": BTREE_BENCHMARK_INDEX_NAME},
+                None,
+                artifact,
+            )
+            target_sql_parts = [f"DROP INDEX IF EXISTS {name};" for name in dropped_indexes]
+            target_sql_parts.append(BTREE_BENCHMARK_INDEX_SQL + ";")
+            await insert_admin_action(
+                conn,
+                user["user_id"],
+                "category_index_create",
+                exp_id,
+                target_sql="\n".join(target_sql_parts),
+            )
     return {"status": "ok", "artifact": artifact, "experiment_id": exp_id}
 
 
@@ -1334,13 +1569,21 @@ async def drop_category_index(
             "category_index_drop",
             "json",
         )
-        exp_id = await insert_experiment(
-            conn,
-            "category_index_drop",
-            {"dropped_indexes": dropped_indexes},
-            None,
-            artifact,
-        )
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                "category_index_drop",
+                {"dropped_indexes": dropped_indexes},
+                None,
+                artifact,
+            )
+            await insert_admin_action(
+                conn,
+                user["user_id"],
+                "category_index_drop",
+                exp_id,
+                target_sql="\n".join([f"DROP INDEX IF EXISTS {name};" for name in dropped_indexes]) or "-- no matching indexes to drop",
+            )
     return {"status": "ok", "artifact": artifact, "experiment_id": exp_id, "dropped_indexes": dropped_indexes}
 
 
@@ -1391,20 +1634,28 @@ async def run_gin_benchmark(
             [f"-- run {i + 1} --\n{text}" for i, text in enumerate(explain_texts)]
         )
         artifact = await write_artifact(artifact_text, "gin_benchmark")
-        exp_id = await insert_experiment(
-            conn,
-            "gin_benchmark",
-            {
-                "tag_ids": ids,
-                "mode": mode,
-                "operator": operator,
-                "runs": runs,
-                "matched_count": matched_count,
-                "median_execution_time_ms": median_time,
-            },
-            chosen_explain,
-            artifact,
-        )
+        async with conn.transaction():
+            exp_id = await insert_experiment(
+                conn,
+                "gin_benchmark",
+                {
+                    "tag_ids": ids,
+                    "mode": mode,
+                    "operator": operator,
+                    "runs": runs,
+                    "matched_count": matched_count,
+                    "median_execution_time_ms": median_time,
+                },
+                chosen_explain,
+                artifact,
+            )
+            await insert_admin_action(
+                conn,
+                user["user_id"],
+                "gin_benchmark",
+                exp_id,
+                target_sql=base_sql.replace("$1::int[]", "'{" + ",".join(map(str, ids)) + "}'"),
+            )
 
     return {
         "status": "ok",
@@ -1432,13 +1683,26 @@ async def metrics_latest(
     async with pool.acquire() as conn:
         if operation:
             rows = await conn.fetch(
-                "SELECT * FROM experiment_results WHERE operation = $1 ORDER BY created_at DESC LIMIT $2",
+                """
+                SELECT er.*, aa.target_sql
+                FROM experiment_results er
+                LEFT JOIN admin_actions aa ON aa.experiment_id = er.id
+                WHERE er.operation = $1
+                ORDER BY er.created_at DESC
+                LIMIT $2
+                """,
                 operation,
                 limit,
             )
         else:
             rows = await conn.fetch(
-                "SELECT * FROM experiment_results ORDER BY created_at DESC LIMIT $1",
+                """
+                SELECT er.*, aa.target_sql
+                FROM experiment_results er
+                LEFT JOIN admin_actions aa ON aa.experiment_id = er.id
+                ORDER BY er.created_at DESC
+                LIMIT $1
+                """,
                 limit,
             )
     return serialize_datetimes({"rows": [dict(r) for r in rows]})

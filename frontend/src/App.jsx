@@ -7,15 +7,10 @@ import Article from './pages/Article.jsx';
 import Editor from './pages/Editor.jsx';
 import Admin from './pages/Admin.jsx';
 
-const roles = {
-  author: ['feed', 'editor'],
-  editor: ['feed', 'editor'],
-  admin: ['feed', 'editor', 'admin']
-};
-
 export default function App() {
   const [token, setAuthToken] = useState(localStorage.getItem('token'));
   const [role, setRole] = useState(localStorage.getItem('role'));
+  const [userId, setUserId] = useState(localStorage.getItem('user_id'));
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -25,18 +20,22 @@ export default function App() {
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('role');
+    localStorage.removeItem('user_id');
     setToken(null);
     setAuthToken(null);
     setRole(null);
+    setUserId(null);
     navigate('/login');
   };
 
-  const handleLogin = (newToken, newRole) => {
+  const handleLogin = (newToken, newRole, newUserId) => {
     localStorage.setItem('token', newToken);
     localStorage.setItem('role', newRole);
+    localStorage.setItem('user_id', String(newUserId));
     setToken(newToken);
     setAuthToken(newToken);
     setRole(newRole);
+    setUserId(String(newUserId));
     navigate('/');
   };
 
@@ -61,9 +60,9 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login onLogin={handleLogin} />} />
           <Route path="/" element={<Feed role={role} />} />
-          <Route path="/articles/:id" element={<Article role={role} />} />
-          <Route path="/editor" element={<Editor role={role} />} />
-          <Route path="/editor/:id" element={<Editor role={role} />} />
+          <Route path="/articles/:id" element={<Article role={role} userId={userId} />} />
+          <Route path="/editor" element={<Editor role={role} userId={userId} />} />
+          <Route path="/editor/:id" element={<Editor role={role} userId={userId} />} />
           <Route path="/admin" element={<Admin role={role} />} />
         </Routes>
       </main>

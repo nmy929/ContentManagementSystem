@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useParams } from 'react-router-dom';
 import api from '../api';
 
-export default function Editor({ role }) {
+export default function Editor({ role, userId }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const isEdit = Boolean(id);
@@ -13,6 +13,8 @@ export default function Editor({ role }) {
   const [status, setStatus] = useState('draft');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [article, setArticle] = useState(null);
+  const [canEdit, setCanEdit] = useState(true);
 
   useEffect(() => {
     if (!isEdit) return;
@@ -20,18 +22,29 @@ export default function Editor({ role }) {
       setLoading(true);
       try {
         const res = await api.get(`/api/articles/${id}`);
-        setTitle(res.data.title || '');
-        setContent(res.data.content || '');
-        setCategoryId(res.data.category_id ? String(res.data.category_id) : '');
-        setStatus(res.data.status || 'draft');
+        const nextArticle = res.data;
+        const editable = role === 'editor'
+          || role === 'admin'
+          || (role === 'author' && String(nextArticle.author_id) === String(userId));
+        setArticle(nextArticle);
+        setCanEdit(editable);
+        if (!editable) {
+          setMessage('Authors can only edit their own articles.');
+          return;
+        }
+        setTitle(nextArticle.title || '');
+        setContent(nextArticle.content || '');
+        setCategoryId(nextArticle.category_id ? String(nextArticle.category_id) : '');
+        setStatus(nextArticle.status || 'draft');
       } catch (err) {
-        setMessage('Failed to load article for edit.');
+        setCanEdit(false);
+        setMessage(err.response?.data?.detail || 'Failed to load article for edit.');
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, [id, isEdit]);
+  }, [id, isEdit, role, userId]);
 
   const create = async () => {
     setMessage('');
@@ -65,6 +78,10 @@ export default function Editor({ role }) {
   };
 
   const update = async () => {
+    if (!canEdit) {
+      setMessage('Authors can only edit their own articles.');
+      return;
+    }
     setMessage('');
     try {
       await api.put(`/api/articles/${id}`, {
@@ -82,6 +99,20 @@ export default function Editor({ role }) {
     return <div className="card">Please login first.</div>;
   }
 
+  if (isEdit && !loading && !canEdit) {
+    return (
+      <div className="card">
+        <h2>Edit Article</h2>
+        <p>{message || 'You do not have permission to edit this article.'}</p>
+        {article && (
+          <button className="secondary" onClick={() => navigate(`/articles/${article.article_id}`)}>
+            Back to Article
+          </button>
+        )}
+      </div>
+    );
+  }
+
   if (isEdit) {
     return (
       <div className="card">
@@ -91,12 +122,14 @@ export default function Editor({ role }) {
         <input value={title} onChange={(e) => setTitle(e.target.value)} />
         <label>Content</label>
         <textarea rows="8" value={content} onChange={(e) => setContent(e.target.value)} />
-        <button onClick={update} disabled={loading}>
-          Save Revision
-        </button>
-        <button className="secondary" onClick={() => navigate(`/articles/${id}`)} disabled={loading}>
-          Back to Article
-        </button>
+        <div className="button-row">
+          <button onClick={update} disabled={loading}>
+            Save Revision
+          </button>
+          <button className="secondary" onClick={() => navigate(`/articles/${id}`)} disabled={loading}>
+            Back to Article
+          </button>
+        </div>
         {message && <p>{message}</p>}
       </div>
     );
