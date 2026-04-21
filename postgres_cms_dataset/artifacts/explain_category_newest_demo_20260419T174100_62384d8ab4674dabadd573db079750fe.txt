@@ -1,0 +1,9 @@
+Limit  (cost=0.41..160.09 rows=200 width=52) (actual time=0.064..0.932 rows=200 loops=1)
+  Buffers: shared hit=105
+  ->  Index Scan using idx_articles_category_published on articles  (cost=0.41..3946.77 rows=4943 width=52) (actual time=0.063..0.909 rows=200 loops=1)
+        Index Cond: (category_id = 1)
+        Buffers: shared hit=105
+Planning:
+  Buffers: shared hit=3
+Planning Time: 0.142 ms
+Execution Time: 0.964 ms

@@ -1,0 +1,22 @@
+Limit  (cost=501.72..501.77 rows=20 width=59) (actual time=0.404..0.406 rows=20 loops=1)
+  Buffers: shared hit=124
+  ->  Sort  (cost=501.72..501.87 rows=60 width=59) (actual time=0.403..0.404 rows=20 loops=1)
+        Sort Key: published_at DESC
+        Sort Method: top-N heapsort  Memory: 30kB
+        Buffers: shared hit=124
+        ->  Bitmap Heap Scan on articles  (cost=241.20..500.12 rows=60 width=59) (actual time=0.359..0.387 rows=50 loops=1)
+              Recheck Cond: ((author_id = '12'::bigint) AND (category_id = 1))
+              Filter: (status = 'published'::text)
+              Rows Removed by Filter: 24
+              Heap Blocks: exact=74
+              Buffers: shared hit=124
+              ->  BitmapAnd  (cost=241.20..241.20 rows=86 width=0) (actual time=0.350..0.350 rows=0 loops=1)
+                    Buffers: shared hit=50
+                    ->  Bitmap Index Scan on idx_articles_author  (cost=0.00..14.69 rows=853 width=0) (actual time=0.054..0.054 rows=832 loops=1)
+                          Index Cond: (author_id = '12'::bigint)
+                          Buffers: shared hit=2
+                    ->  Bitmap Index Scan on idx_articles_category_published  (cost=0.00..226.24 rows=5043 width=0) (actual time=0.269..0.269 rows=4979 loops=1)
+                          Index Cond: (category_id = 1)
+                          Buffers: shared hit=48
+Planning Time: 0.044 ms
+Execution Time: 0.432 ms

@@ -1,0 +1,4 @@
+{
+  "action": "tags_index_drop",
+  "index": "idx_articles_tagids_gin"
+}

@@ -1,0 +1,38 @@
+-- run 1 --
+Bitmap Heap Scan on articles_tag_index  (cost=65.90..578.58 rows=4374 width=8) (actual time=0.673..2.727 rows=4407 loops=1)
+  Recheck Cond: (tag_ids && '{98,99,100}'::integer[])
+  Heap Blocks: exact=458
+  Buffers: shared hit=465
+  ->  Bitmap Index Scan on idx_articles_tagids_gin  (cost=0.00..64.81 rows=4374 width=0) (actual time=0.603..0.603 rows=4407 loops=1)
+        Index Cond: (tag_ids && '{98,99,100}'::integer[])
+        Buffers: shared hit=7
+Planning:
+  Buffers: shared hit=22
+Planning Time: 0.279 ms
+Execution Time: 2.976 ms
+
+-- run 2 --
+Bitmap Heap Scan on articles_tag_index  (cost=65.90..578.58 rows=4374 width=8) (actual time=0.529..1.753 rows=4407 loops=1)
+  Recheck Cond: (tag_ids && '{98,99,100}'::integer[])
+  Heap Blocks: exact=458
+  Buffers: shared hit=465
+  ->  Bitmap Index Scan on idx_articles_tagids_gin  (cost=0.00..64.81 rows=4374 width=0) (actual time=0.479..0.480 rows=4407 loops=1)
+        Index Cond: (tag_ids && '{98,99,100}'::integer[])
+        Buffers: shared hit=7
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.050 ms
+Execution Time: 1.984 ms
+
+-- run 3 --
+Bitmap Heap Scan on articles_tag_index  (cost=65.90..578.58 rows=4374 width=8) (actual time=0.495..1.500 rows=4407 loops=1)
+  Recheck Cond: (tag_ids && '{98,99,100}'::integer[])
+  Heap Blocks: exact=458
+  Buffers: shared hit=465
+  ->  Bitmap Index Scan on idx_articles_tagids_gin  (cost=0.00..64.81 rows=4374 width=0) (actual time=0.448..0.448 rows=4407 loops=1)
+        Index Cond: (tag_ids && '{98,99,100}'::integer[])
+        Buffers: shared hit=7
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.052 ms
+Execution Time: 1.727 ms

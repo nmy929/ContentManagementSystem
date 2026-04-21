@@ -17,69 +17,41 @@ This project is a full-stack CMS designed to capture PostgreSQL internal behavio
 
 ## Quick Start
 
-1. Build and start services:
+Run one command from the project root:
 
 ```bash
 ./scripts/start.sh
 ```
 
-2. Load schema and data:
+What `./scripts/start.sh` does:
 
-```bash
-docker compose exec -T db bash -lc "cd /data && psql -U d551user -d d551 -f schema_and_load_all.sql"
-docker compose exec -T backend psql -h db -U d551user -d d551 -f /backend/init_experiment_table.sql
-```
+1. Starts `db`
+2. Waits until PostgreSQL is ready
+3. Builds and starts `backend` and `frontend`
+4. Waits until backend API is reachable
+5. Loads schema + CSV dataset from `postgres_cms_dataset/schema_and_load_all.sql`
+6. Initializes `experiment_results` from `backend/init_experiment_table.sql`
 
-If the feed shows `Results: 0`, reload the dataset with the same command above and then refresh the page.
-
-3. Open the UI:
+Open:
 
 - Frontend: http://localhost:5173
-- Backend API: http://localhost:8000
+- Backend API docs: http://localhost:8000/docs
 
 ## Login Accounts
 
-Use usernames from `postgres_cms_dataset/users.csv` (for example: `author1`, `editor1`, `admin1`).
+Use usernames from `postgres_cms_dataset/users.csv`:
 
-Password is the same as the username.
-
-## Running the Full Demo Script
-
-This script waits for the services, reloads data when `articles` is empty, runs feed explain, performs edits, bulk status change, load test, and bundles artifacts into a zip.
-
-```bash
-./scripts/run_full_demo.sh
-```
-
-Output zip:
-
-- `postgres_cms_dataset/artifacts_demo.zip`
+- `user001` to `user050`: `author`
+- `user051` to `user058`: `editor`
+- `user059` to `user060`: `admin`
+- Password = username (for all accounts)
 
 ## Key Features by Role
 
-- Author: create articles, view all articles, edit own articles, basic analytics
-- Editor: all author capabilities plus edit any article, flag comments, delete comments
-- Admin: bulk operations, EXPLAIN runner, VACUUM, index control, load test, artifact downloads
-- All users: advanced tag filter (ANY/ALL, sorted, paginated)
-- Comment visibility: flagged comments are hidden from authors and remain visible to editors/admins
-
-## Admin Operations (UI)
-
-- Index modules:
-  - `B-tree Benchmark Module (Category + Newest)`
-  - `GIN Benchmark Module (Tag Array Filtering)`
-- Storage modules:
-  - `Load Test Module`
-  - `Storage Maintenance Module`
-- Run EXPLAIN: `Admin -> Index Modules -> B-tree EXPLAIN Runner`
-- Drop/Create B-tree index: `Admin -> Index Modules -> B-tree Index Control`
-- GIN query benchmark: `Admin -> Index Modules -> GIN Benchmark Query`
-- GIN index control: `Admin -> Index Modules -> GIN Index Control`
-- Load test: `Admin -> Storage Modules -> Load Test` (configurable `concurrency` and `ops`)
-- Autovacuum toggle: `Admin -> Storage Modules -> Autovacuum`
-- VACUUM: `Admin -> Storage Modules -> VACUUM`
-- Bulk status change: `Admin -> Storage Modules -> Bulk Status Change` (Preview/Apply, source -> target)
-- Metrics list: `Admin -> Experiment Results`
+- All users: `Feed module`
+- Admin `<INDEX MODULE>`: `B-tree Benchmark Module (Category + Newest)` with `B-tree Index Control` and `B-tree EXPLAIN Runner`;  `GIN Benchmark Module (Tag Array Filtering)` with `GIN Benchmark Query`, `GIN Index Control`, and `GIN EXPLAIN and Result Summary`
+- Admin `<STORAGE MODULE>`: `Load Test Module` (`Load Test`) and `Storage Maintenance Module` (`Autovacuum`, `VACUUM`, `Bulk Status Change`)
+- Admin `<EXPERIMENT RESULTS>`: artifact list and downloads
 
 Artifacts are stored in:
 
@@ -92,7 +64,7 @@ Feed includes an Advanced Tag Filter that queries articles by tags using a mater
 - Mode `ANY` uses overlap (`&&`)
 - Mode `ALL` uses containment (`@>`)
 
-Admin users can toggle the GIN index on/off from the Feed page to compare execution plans.
+Admin users can toggle the GIN index on/off from the Admin GIN benchmark module to compare execution plans.
 
 If you update tags or article_tags, refresh the materialized view:
 
@@ -102,54 +74,37 @@ curl -X POST http://localhost:8000/api/admin/refresh_tags_index -H "Authorizatio
 
 ## API Notes
 
-- Auth: `POST /api/auth/login` (token-based)
-- Every feed/search query runs EXPLAIN and writes an artifact
-- Admin-only endpoints are protected by role-based checks
+- Auth:
+- `POST /api/auth/login` returns JWT token
+- Send token as `Authorization: Bearer <token>`
 
-## Rebuild and Reproduce
+- Core endpoints:
+- `GET /api/articles`
+- `GET /api/articles/{id}`
+- `GET /api/search`
+- `GET /api/tags`
+- `GET /api/categories`
 
-1. Verify dataset folder exists:
+- Admin benchmark endpoints:
+- `POST /api/admin/run_explain`
+- `GET /api/admin/category_index/status`
+- `POST /api/admin/category_index/create`
+- `POST /api/admin/category_index/drop`
+- `POST /api/admin/gin_benchmark`
+- `POST /api/admin/tags_index/create`
+- `POST /api/admin/tags_index/drop`
+- `POST /api/admin/refresh_tags_index`
 
-```bash
-ls postgres_cms_dataset
-```
+- Storage/maintenance endpoints:
+- `POST /api/admin/run_load_test`
+- `POST /api/admin/run_vacuum`
+- `POST /api/admin/set_autovacuum`
+- `POST /api/admin/bulk_status_change/preview`
+- `POST /api/admin/bulk_status_change/apply`
 
-2. Start services:
-
-```bash
-docker compose up -d --build
-```
-
-3. Import schema and data:
-
-```bash
-docker compose exec -T db bash -lc "cd /data && psql -U d551user -d d551 -f schema_and_load_all.sql"
-docker compose exec -T backend psql -h db -U d551user -d d551 -f /backend/init_experiment_table.sql
-```
-
-The schema/load script rebuilds the dataset from a clean state. It drops dependent objects with `CASCADE`, recreates the tables, and reloads the CSV data.
-
-4. Open the web UI:
-
-```text
-http://localhost:5173
-```
-
-5. Login as admin (from `users.csv`) and run:
-
-- Feed -> optional Category ID / Author ID / Author Username filters, then "Refresh Feed" to collect EXPLAIN
-- Admin -> EXPLAIN Runner for custom SQL
-- Admin -> Bulk Status Change (Preview/Apply), then (optional) VACUUM
-
-6. Download artifacts (admin only):
-
-- Navigate to `postgres_cms_dataset/artifacts/`
-- Optionally package with:
-
-```bash
-cd postgres_cms_dataset
-zip -r artifacts_demo.zip artifacts
-```
+- Metrics/artifacts:
+- `GET /api/metrics/latest`
+- `GET /api/metrics/artifact/{filename}`
 
 ## Environment Variables
 
@@ -165,8 +120,7 @@ Frontend service uses:
 
 ## Notes
 
-- EXPLAIN is restricted to SELECT statements only.
-- VACUUM output is captured via `psql` in the backend container.
-- Artifacts are written as text/JSON/CSV and indexed in `experiment_results`.
-- `articles.current_revision_id` is maintained by application logic during create/edit flows; it is intentionally not enforced by a database foreign key.
-- If you reload the dataset, rerun `schema_and_load_all.sql` instead of manually dropping tables.
+- EXPLAIN is restricted to `SELECT` statements only.
+- `schema_and_load_all.sql` reloads the dataset from a clean state.
+- `articles_tag_index` is a materialized view; use `Refresh Tag Index` after tag mapping changes.
+- Artifacts are written to `postgres_cms_dataset/artifacts/` and indexed in `experiment_results`.

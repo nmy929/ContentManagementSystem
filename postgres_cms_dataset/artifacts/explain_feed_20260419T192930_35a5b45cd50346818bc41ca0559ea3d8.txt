@@ -1,0 +1,12 @@
+Limit  (cost=2479.79..2479.84 rows=20 width=59) (actual time=11.205..11.208 rows=20 loops=1)
+  Buffers: shared hit=925
+  ->  Sort  (cost=2479.79..2567.15 rows=34942 width=59) (actual time=11.203..11.204 rows=20 loops=1)
+        Sort Key: published_at DESC
+        Sort Method: top-N heapsort  Memory: 30kB
+        Buffers: shared hit=925
+        ->  Seq Scan on articles  (cost=0.00..1550.00 rows=34942 width=59) (actual time=0.011..6.783 rows=34957 loops=1)
+              Filter: (status = 'published'::text)
+              Rows Removed by Filter: 15043
+              Buffers: shared hit=925
+Planning Time: 0.115 ms
+Execution Time: 11.228 ms

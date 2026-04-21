@@ -1,0 +1,23 @@
+-- run 1 --
+Seq Scan on articles_tag_index  (cost=0.00..1083.00 rows=7019 width=8) (actual time=0.022..11.932 rows=7097 loops=1)
+  Filter: (tag_ids && '{1,2,3,4,5}'::integer[])
+  Rows Removed by Filter: 42903
+  Buffers: shared hit=458
+Planning Time: 0.109 ms
+Execution Time: 12.305 ms
+
+-- run 2 --
+Seq Scan on articles_tag_index  (cost=0.00..1083.00 rows=7019 width=8) (actual time=0.008..9.243 rows=7097 loops=1)
+  Filter: (tag_ids && '{1,2,3,4,5}'::integer[])
+  Rows Removed by Filter: 42903
+  Buffers: shared hit=458
+Planning Time: 0.043 ms
+Execution Time: 9.608 ms
+
+-- run 3 --
+Seq Scan on articles_tag_index  (cost=0.00..1083.00 rows=7019 width=8) (actual time=0.005..7.123 rows=7097 loops=1)
+  Filter: (tag_ids && '{1,2,3,4,5}'::integer[])
+  Rows Removed by Filter: 42903
+  Buffers: shared hit=458
+Planning Time: 0.034 ms
+Execution Time: 7.407 ms
