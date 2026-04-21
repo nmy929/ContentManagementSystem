@@ -1,0 +1,30 @@
+-- pg_stat_before --
+relname,n_live_tup,n_dead_tup
+admin_actions,103,0
+article_tags,150476,0
+article_view,201010,0
+articles,50001,0
+articles_tag_index,50000,0
+categories,10,0
+comments,15001,4
+experiment_results,14,0
+revisions,65108,0
+tags,100,0
+users,60,26
+
+-- pg_stat_after --
+relname,n_live_tup,n_dead_tup
+admin_actions,103,0
+article_tags,150476,0
+article_view,201010,0
+articles,50001,0
+articles_tag_index,50000,0
+categories,10,0
+comments,15001,4
+experiment_results,14,0
+revisions,65108,0
+tags,100,0
+users,60,26
+
+-- result --
+UPDATE 3473

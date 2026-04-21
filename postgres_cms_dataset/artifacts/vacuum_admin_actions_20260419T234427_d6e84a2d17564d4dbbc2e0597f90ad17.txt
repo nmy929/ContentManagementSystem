@@ -1,0 +1,25 @@
+VACUUM
+INFO:  vacuuming "d551.public.admin_actions"
+INFO:  finished vacuuming "d551.public.admin_actions": index scans: 0
+pages: 0 removed, 2 remain, 2 scanned (100.00% of total)
+tuples: 0 removed, 116 remain, 0 are dead but not yet removable
+removable cutoff: 856, which was 0 XIDs old when operation ended
+new relfrozenxid: 751, which is 16 XIDs ahead of previous value
+index scan not needed: 0 pages from table (0.00% of total) had 0 dead item identifiers removed
+avg read rate: 40.064 MB/s, avg write rate: 80.128 MB/s
+buffer usage: 71 hits, 2 misses, 4 dirtied
+WAL usage: 3 records, 1 full page images, 8503 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  vacuuming "d551.pg_toast.pg_toast_16517"
+INFO:  finished vacuuming "d551.pg_toast.pg_toast_16517": index scans: 0
+pages: 0 removed, 0 remain, 0 scanned (100.00% of total)
+tuples: 0 removed, 0 remain, 0 are dead but not yet removable
+removable cutoff: 856, which was 0 XIDs old when operation ended
+new relfrozenxid: 856, which is 121 XIDs ahead of previous value
+index scan not needed: 0 pages from table (100.00% of total) had 0 dead item identifiers removed
+avg read rate: 93.006 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 27 hits, 1 misses, 0 dirtied
+WAL usage: 1 records, 0 full page images, 188 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  analyzing "public.admin_actions"
+INFO:  "admin_actions": scanned 2 of 2 pages, containing 116 live rows and 0 dead rows; 116 rows in sample, 116 estimated total rows

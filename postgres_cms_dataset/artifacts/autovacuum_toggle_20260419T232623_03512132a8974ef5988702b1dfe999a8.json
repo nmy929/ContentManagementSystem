@@ -1,0 +1,36 @@
+{
+  "before": {
+    "table": "articles",
+    "global_autovacuum": "on",
+    "global_autovacuum_naptime": "1min",
+    "reloptions": [],
+    "table_autovacuum_enabled_setting": null,
+    "effective_autovacuum_enabled": true,
+    "pg_stat_user_tables": {
+      "n_live_tup": 50001,
+      "n_dead_tup": 12,
+      "last_autovacuum": "2026-04-20 06:22:44",
+      "last_vacuum": null,
+      "autovacuum_count": 1,
+      "vacuum_count": 0
+    }
+  },
+  "after": {
+    "table": "articles",
+    "global_autovacuum": "on",
+    "global_autovacuum_naptime": "1min",
+    "reloptions": [
+      "autovacuum_enabled=false"
+    ],
+    "table_autovacuum_enabled_setting": false,
+    "effective_autovacuum_enabled": false,
+    "pg_stat_user_tables": {
+      "n_live_tup": 50001,
+      "n_dead_tup": 12,
+      "last_autovacuum": "2026-04-20 06:22:44",
+      "last_vacuum": null,
+      "autovacuum_count": 1,
+      "vacuum_count": 0
+    }
+  }
+}

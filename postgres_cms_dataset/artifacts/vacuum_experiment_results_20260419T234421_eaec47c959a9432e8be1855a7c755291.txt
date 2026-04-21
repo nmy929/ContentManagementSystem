@@ -1,0 +1,25 @@
+VACUUM
+INFO:  vacuuming "d551.public.experiment_results"
+INFO:  finished vacuuming "d551.public.experiment_results": index scans: 0
+pages: 0 removed, 1 remain, 1 scanned (100.00% of total)
+tuples: 0 removed, 12 remain, 0 are dead but not yet removable
+removable cutoff: 848, which was 0 XIDs old when operation ended
+new relfrozenxid: 825, which is 99 XIDs ahead of previous value
+index scan not needed: 0 pages from table (0.00% of total) had 0 dead item identifiers removed
+avg read rate: 73.357 MB/s, avg write rate: 73.357 MB/s
+buffer usage: 53 hits, 4 misses, 4 dirtied
+WAL usage: 2 records, 1 full page images, 8444 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  vacuuming "d551.pg_toast.pg_toast_16386"
+INFO:  finished vacuuming "d551.pg_toast.pg_toast_16386": index scans: 0
+pages: 0 removed, 0 remain, 0 scanned (100.00% of total)
+tuples: 0 removed, 0 remain, 0 are dead but not yet removable
+removable cutoff: 848, which was 0 XIDs old when operation ended
+new relfrozenxid: 848, which is 122 XIDs ahead of previous value
+index scan not needed: 0 pages from table (100.00% of total) had 0 dead item identifiers removed
+avg read rate: 86.806 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 27 hits, 1 misses, 0 dirtied
+WAL usage: 1 records, 0 full page images, 188 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  analyzing "public.experiment_results"
+INFO:  "experiment_results": scanned 1 of 1 pages, containing 12 live rows and 0 dead rows; 12 rows in sample, 12 estimated total rows

@@ -1,0 +1,30 @@
+VACUUM
+INFO:  vacuuming "d551.public.articles"
+INFO:  launched 1 parallel vacuum worker for index vacuuming (planned: 1)
+INFO:  finished vacuuming "d551.public.articles": index scans: 1
+pages: 0 removed, 947 remain, 43 scanned (4.54% of total)
+tuples: 48 removed, 49975 remain, 0 are dead but not yet removable
+removable cutoff: 5596, which was 0 XIDs old when operation ended
+index scan needed: 20 pages from table (2.11% of total) had 148 dead item identifiers removed
+index "articles_pkey": pages: 139 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+index "idx_articles_category_published": pages: 94 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+index "idx_articles_published_at": pages: 56 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+index "idx_articles_author": pages: 62 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+avg read rate: 0.000 MB/s, avg write rate: 32.850 MB/s
+buffer usage: 570 hits, 0 misses, 17 dirtied
+WAL usage: 233 records, 18 full page images, 147455 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  vacuuming "d551.pg_toast.pg_toast_17094"
+INFO:  finished vacuuming "d551.pg_toast.pg_toast_17094": index scans: 0
+pages: 0 removed, 0 remain, 0 scanned (100.00% of total)
+tuples: 0 removed, 0 remain, 0 are dead but not yet removable
+removable cutoff: 5596, which was 0 XIDs old when operation ended
+new relfrozenxid: 5596, which is 1009 XIDs ahead of previous value
+new relminmxid: 3939, which is 976 MXIDs ahead of previous value
+index scan not needed: 0 pages from table (100.00% of total) had 0 dead item identifiers removed
+avg read rate: 0.000 MB/s, avg write rate: 162.760 MB/s
+buffer usage: 28 hits, 0 misses, 1 dirtied
+WAL usage: 1 records, 1 full page images, 8009 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  analyzing "public.articles"
+INFO:  "articles": scanned 947 of 947 pages, containing 50001 live rows and 0 dead rows; 30000 rows in sample, 50001 estimated total rows

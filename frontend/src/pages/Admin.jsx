@@ -51,6 +51,12 @@ function loadAdminUiState() {
   }
 }
 
+function getDefaultBulkBeforeDate() {
+  const today = new Date();
+  today.setFullYear(today.getFullYear() - 1);
+  return today.toISOString().slice(0, 10);
+}
+
 export default function Admin({ role }) {
   const persistedState = loadAdminUiState();
   const hasInitializedStorageStatus = useRef(false);
@@ -61,7 +67,7 @@ export default function Admin({ role }) {
   const [categoryId, setCategoryId] = useState(persistedState.categoryId || '1');
   const [bulkSourceStatus, setBulkSourceStatus] = useState(persistedState.bulkSourceStatus || 'published');
   const [bulkTargetStatus, setBulkTargetStatus] = useState(persistedState.bulkTargetStatus || 'archived');
-  const [bulkBeforeDate, setBulkBeforeDate] = useState(persistedState.bulkBeforeDate || '');
+  const [bulkBeforeDate, setBulkBeforeDate] = useState(persistedState.bulkBeforeDate || getDefaultBulkBeforeDate());
   const [bulkPreviewCount, setBulkPreviewCount] = useState(persistedState.bulkPreviewCount ?? null);
   const [bulkMvccBefore, setBulkMvccBefore] = useState(persistedState.bulkMvccBefore || null);
   const [bulkMvccAfter, setBulkMvccAfter] = useState(persistedState.bulkMvccAfter || null);
@@ -813,7 +819,9 @@ export default function Admin({ role }) {
                 const next = e.target.value;
                 setBulkTargetStatus(next);
                 setBulkPreviewCount(null);
-                if (next !== 'archived') setBulkBeforeDate('');
+                if (next === 'archived' && !bulkBeforeDate) {
+                  setBulkBeforeDate(getDefaultBulkBeforeDate());
+                }
               }}
             >
               <option value="published">published</option>

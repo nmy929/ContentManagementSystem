@@ -1,0 +1,10 @@
+{
+  "target": "article_view",
+  "concurrency": 100,
+  "ops": 1000,
+  "duration_sec": 0.13944,
+  "tps": 7171.543316121629,
+  "errors": 0,
+  "started_at": "2026-04-20 10:13:49",
+  "ended_at": "2026-04-20 10:13:49"
+}

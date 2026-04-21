@@ -1,0 +1,28 @@
+VACUUM
+INFO:  vacuuming "d551.public.users"
+INFO:  finished vacuuming "d551.public.users": index scans: 1
+pages: 0 removed, 2 remain, 2 scanned (100.00% of total)
+tuples: 0 removed, 60 remain, 0 are dead but not yet removable
+removable cutoff: 840, which was 0 XIDs old when operation ended
+new relfrozenxid: 743, which is 16 XIDs ahead of previous value
+index scan needed: 1 pages from table (50.00% of total) had 26 dead item identifiers removed
+index "users_pkey": pages: 2 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+index "users_username_key": pages: 2 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+index "users_email_key": pages: 2 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+avg read rate: 36.939 MB/s, avg write rate: 147.754 MB/s
+buffer usage: 98 hits, 2 misses, 8 dirtied
+WAL usage: 7 records, 5 full page images, 16793 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  vacuuming "d551.pg_toast.pg_toast_16395"
+INFO:  finished vacuuming "d551.pg_toast.pg_toast_16395": index scans: 0
+pages: 0 removed, 0 remain, 0 scanned (100.00% of total)
+tuples: 0 removed, 0 remain, 0 are dead but not yet removable
+removable cutoff: 840, which was 0 XIDs old when operation ended
+new relfrozenxid: 840, which is 113 XIDs ahead of previous value
+index scan not needed: 0 pages from table (100.00% of total) had 0 dead item identifiers removed
+avg read rate: 118.371 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 32 hits, 1 misses, 0 dirtied
+WAL usage: 1 records, 0 full page images, 188 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  analyzing "public.users"
+INFO:  "users": scanned 2 of 2 pages, containing 60 live rows and 0 dead rows; 60 rows in sample, 60 estimated total rows

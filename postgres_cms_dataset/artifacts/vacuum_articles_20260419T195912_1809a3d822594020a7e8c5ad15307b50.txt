@@ -1,0 +1,29 @@
+VACUUM
+INFO:  vacuuming "d551.public.articles"
+INFO:  launched 1 parallel vacuum worker for index vacuuming (planned: 1)
+INFO:  finished vacuuming "d551.public.articles": index scans: 1
+pages: 0 removed, 989 remain, 931 scanned (94.14% of total)
+tuples: 1014 removed, 49803 remain, 0 are dead but not yet removable
+removable cutoff: 4432, which was 0 XIDs old when operation ended
+index scan needed: 85 pages from table (8.59% of total) had 124 dead item identifiers removed
+index "articles_pkey": pages: 139 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+index "idx_articles_category_published": pages: 102 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+index "idx_articles_published_at": pages: 61 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+index "idx_articles_author": pages: 62 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+avg read rate: 0.000 MB/s, avg write rate: 7.374 MB/s
+buffer usage: 2427 hits, 0 misses, 12 dirtied
+WAL usage: 1466 records, 13 full page images, 187899 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.01 s
+INFO:  vacuuming "d551.pg_toast.pg_toast_16873"
+INFO:  finished vacuuming "d551.pg_toast.pg_toast_16873": index scans: 0
+pages: 0 removed, 0 remain, 0 scanned (100.00% of total)
+tuples: 0 removed, 0 remain, 0 are dead but not yet removable
+removable cutoff: 4432, which was 0 XIDs old when operation ended
+new relfrozenxid: 4432, which is 4 XIDs ahead of previous value
+index scan not needed: 0 pages from table (100.00% of total) had 0 dead item identifiers removed
+avg read rate: 0.000 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 28 hits, 0 misses, 0 dirtied
+WAL usage: 1 records, 0 full page images, 188 bytes
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+INFO:  analyzing "public.articles"
+INFO:  "articles": scanned 989 of 989 pages, containing 50005 live rows and 0 dead rows; 30000 rows in sample, 50005 estimated total rows
