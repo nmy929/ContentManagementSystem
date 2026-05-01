@@ -22,34 +22,12 @@ Clone the repository and move to the project root:
 
 ```bash
 git clone <repository-url>
-cd ContentManagementSystem
+cd <your-cloned-repository-folder>
 ```
 
 ## Install Dependencies
 
 This project uses Docker for all services, so local installation of Python, Node.js, npm, and PostgreSQL is not required. Dependencies are pulled and built by Docker Compose.
-
-To pre-build everything manually, run:
-
-```bash
-docker compose build
-```
-
-## Configure the Project
-
-The default configuration is defined in `docker-compose.yml`, so no extra `.env` file is required for a standard local run.
-
-Backend:
-
-- `DATABASE_URL`: `postgresql://d551user:d551pass@db:5432/d551`
-- `ARTIFACT_DIR`: `/data/artifacts`
-- `JWT_SECRET`: `devsecret`
-
-Frontend:
-
-- `VITE_API_BASE`: `http://localhost:8000`
-
-To customize the project, update these values in `docker-compose.yml` before starting the services.
 
 ## Run the Application
 
@@ -109,10 +87,31 @@ Artifacts are stored in:
 
 Recommended workflows:
 
-- B-tree benchmark:
-  Use the Admin `INDEX MODULE` to create or drop the category index and run the B-tree EXPLAIN benchmark for comparison.
-- GIN benchmark:
-  Use the Admin `GIN Benchmark Module` to compare tag-filter queries with and without the GIN index.
+### Indexing Workflow
+
+- B-tree benchmark workflow:
+  1. Open Admin `INDEX MODULE` -> `B-tree Benchmark Module (Category + Newest)`.
+  2. Purpose: compare query plans for `SELECT title, published_at FROM articles WHERE category_id = ? ORDER BY published_at DESC LIMIT 200` before and after the canonical B-tree index.
+  3. First run without index: click `Drop Category+Published Indexes`, then in `B-tree EXPLAIN Runner` click `Use Demo Query` and `Run EXPLAIN`.
+  4. Observe the result panel: focus on `Seq Scan`, and compare `cost` and `Execution Time`.
+  5. Second run with index: click `Create Canonical Index`, then run the same EXPLAIN again.
+  6. Observe the result panel: `Index Only Scan` appears because the index covers `category_id`, `published_at`, and included `title`, which matches the selected columns; compare `cost` and `Execution Time`.
+  7. Third run: add `status` to `SELECT`, run EXPLAIN again, and explain that the planner may switch to `Index Scan` because `status` is not covered by the index; compare `cost` and `Execution Time`.
+
+- GIN benchmark workflow:
+  1. Open Admin `INDEX MODULE` -> `GIN Benchmark Module (Tag Array Filtering)`.
+  2. Purpose: compare `Seq Scan` vs `Bitmap Index Scan + Bitmap Heap Scan` using the same SQL with/without GIN.
+  3. Choose a tag preset (`Rare` or `Common`), choose `ALL` or `ANY`, and set benchmark runs.
+  4. Click `Run without Index (Drop GIN)`, then click `Run Query`.
+  5. In the summary panel, you can observe:
+     - `Scan Type: Seq Scan`
+     - `Index Used: N/A`
+     - `Median execution time`
+  6. Click `Run with Index (Create GIN)`, then run the same query again.
+  7. In the summary panel, you can observe:
+     - `Scan Type: Bitmap Heap Scan + Bitmap Index Scan`
+     - `Index Used: idx_articles_tagids_gin`
+     - Lower median execution time.
 
 ### Storage Workflow
 
@@ -140,22 +139,21 @@ To reproduce from a clean state, rerun:
 
 Because the startup script reloads `postgres_cms_dataset/schema_and_load_all.sql`, the dataset is reset before experiments run.
 
-## Tag Filter (GIN Index Demonstration)
+## Data and Dataset Instructions
 
-Feed includes an Advanced Tag Filter that queries articles by tags using a materialized view with a GIN index:
+The dataset is loaded automatically by `./scripts/start.sh`.
 
-- Mode `ANY` uses overlap (`&&`)
-- Mode `ALL` uses containment (`@>`)
+- Source files are in `postgres_cms_dataset/`:
+  - `schema_and_load_all.sql`
+  - CSV files used by the SQL `COPY` commands
+- During startup, the script runs:
+  - `schema_and_load_all.sql` inside `/data` in the `db` container
+  - `init_experiment_table.sql` from the `backend` container
 
-Admin users can toggle the GIN index on/off from the Admin GIN benchmark module to compare execution plans.
-
-If tags or article_tags are updated, refresh the materialized view:
-
-```bash
-curl -X POST http://localhost:8000/api/admin/refresh_tags_index -H "Authorization: Bearer <admin_token>"
-```
 
 ## API Notes
+
+Use this section as a quick endpoint map when testing from UI, curl, or Postman.
 
 - Auth: `POST /api/auth/login`
 - Core content: `GET /api/articles`, `GET /api/articles/{id}`, `GET /api/search`, `GET /api/tags`, `GET /api/categories`
@@ -168,6 +166,6 @@ Use `Authorization: Bearer <token>` for authenticated requests.
 ## Notes
 
 - EXPLAIN is restricted to `SELECT` statements only.
-- `schema_and_load_all.sql` reloads the dataset from a clean state.
+- `schema_and_load_all.sql` resets and reloads the dataset.
 - `articles_tag_index` is a materialized view; use `Refresh Tag Index` after tag mapping changes.
 - Artifacts are written to `postgres_cms_dataset/artifacts/` and indexed in `experiment_results`.
